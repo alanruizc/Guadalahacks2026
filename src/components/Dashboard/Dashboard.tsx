@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import styles from './Dashboard.module.css';
 import { Speedometer } from './metrics/Speedometer';
 import { AlertIndicator } from './metrics/AlertIndicator';
 import { StatusBar } from './metrics/StatusBar';
+import { CameraFeed } from '../Camera/CameraFeed';
 
 export interface DriverState {
   speed: number;
@@ -10,6 +11,7 @@ export interface DriverState {
   isAlertActive: boolean;
   isVoiceListening: boolean;
   currentMessage: string | null;
+  isCameraActive: boolean;
 }
 
 const initialState: DriverState = {
@@ -18,6 +20,7 @@ const initialState: DriverState = {
   isAlertActive: false,
   isVoiceListening: false,
   currentMessage: null,
+  isCameraActive: false,
 };
 
 export function Dashboard() {
@@ -35,17 +38,25 @@ export function Dashboard() {
     setState(prev => ({ ...prev, isAlertActive: false, fatigueLevel: 0 }));
   };
 
+  const handleCameraReady = useCallback(() => {
+    setState(prev => ({ ...prev, isCameraActive: true }));
+  }, []);
+
   return (
     <div className={styles.dashboard}>
       <header className={styles.header}>
         <h1 className={styles.title}>Drive Copilot</h1>
         <StatusBar
-          isMonitoring={true}
+          isMonitoring={state.isCameraActive}
           isVoiceActive={state.isVoiceListening}
         />
       </header>
 
       <main className={styles.main}>
+        <section className={styles.cameraSection}>
+          <CameraFeed onReady={handleCameraReady} />
+        </section>
+
         <section className={styles.speedometerSection}>
           <Speedometer
             speed={state.speed}
@@ -97,7 +108,7 @@ export function Dashboard() {
       </main>
 
       <footer className={styles.footer}>
-        <span className={styles.statusText}></span>
+        <span className={styles.statusText}>AI Activo</span>
       </footer>
     </div>
   );
