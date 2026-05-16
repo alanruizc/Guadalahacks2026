@@ -35,6 +35,11 @@
   width: 100%;
 }
 
+.cameraSection {
+  display: flex;
+  justify-content: center;
+}
+
 .speedometerSection {
   display: flex;
   justify-content: center;
