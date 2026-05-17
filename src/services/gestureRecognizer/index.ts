@@ -4,7 +4,7 @@ import {
   type GestureRecognizerResult,
 } from '@mediapipe/tasks-vision';
 
-const MODEL_PATH = '/models/gesture_recognizer.task';
+const MODEL_PATH = '/model/gesture_recognizer.task';
 const WASM_PATH = '/wasm';
 
 let gestureRecognizerInstance: GestureRecognizer | null = null;
