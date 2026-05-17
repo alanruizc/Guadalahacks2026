@@ -57,6 +57,7 @@ export function Dashboard() {
           <CameraFeed onReady={handleCameraReady} />
         </section>
 
+        <div className={styles.content}>
         <section className={styles.speedometerSection}>
           <Speedometer
             speed={state.speed}
@@ -105,10 +106,11 @@ export function Dashboard() {
             </div>
           </section>
         )}
+        </div>
       </main>
 
       <footer className={styles.footer}>
-        <span className={styles.statusText}>AI Activo</span>
+        <span className={styles.statusText}></span>
       </footer>
     </div>
   );
