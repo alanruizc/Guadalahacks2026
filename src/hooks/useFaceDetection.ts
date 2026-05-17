@@ -30,6 +30,7 @@ export function useFaceDetection(): UseFaceDetectionReturn {
   const modelRef = useRef<tf.LayersModel | null>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const porcentajeAcumuladoRef = useRef<number>(0);
+  const nivelFatigaRef = useRef<number>(0);
 
   const initialize = useCallback(async () => {
     setIsLoading(true);
@@ -105,11 +106,7 @@ export function useFaceDetection(): UseFaceDetectionReturn {
       const prediccion = modelRef.current!.predict(batchedTensor) as tf.Tensor;
       const datos = prediccion.dataSync();
 
-      const probDespierto = datos[0];
       const probDormido = datos[1];
-
-      // Registro en consola para verificar los cambios en caliente
-      console.log(`[Inferencia] Cansado: ${(probDormido * 100).toFixed(0)}% | Despierto: ${(probDespierto * 100).toFixed(0)}%`);
 
       if (probDormido > 0.65) {
         porcentajeAcumuladoRef.current = Math.min(100, porcentajeAcumuladoRef.current + 8);
@@ -117,13 +114,20 @@ export function useFaceDetection(): UseFaceDetectionReturn {
         porcentajeAcumuladoRef.current = Math.max(0, porcentajeAcumuladoRef.current - 12);
       }
 
-      setNivelFatiga(Math.round(porcentajeAcumuladoRef.current));
+      const nuevoNivel = Math.round(porcentajeAcumuladoRef.current);
+      if (nuevoNivel !== nivelFatigaRef.current) {
+        nivelFatigaRef.current = nuevoNivel;
+        setNivelFatiga(nuevoNivel);
+      }
     });
   }, []);
 
   const resetFatiga = useCallback(() => {
     porcentajeAcumuladoRef.current = 0;
-    setNivelFatiga(0);
+    if (nivelFatigaRef.current !== 0) {
+      nivelFatigaRef.current = 0;
+      setNivelFatiga(0);
+    }
   }, []);
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState } from 'react';
 import styles from './Dashboard.module.css';
 import { Speedometer } from './metrics/Speedometer';
 import { AlertIndicator } from './metrics/AlertIndicator';
@@ -23,23 +23,8 @@ const initialState: DriverState = {
   isCameraActive: false,
 };
 
-// CORRECCIÓN 1: Definimos la interfaz para aceptar la fatiga que viene del exterior
-interface DashboardProps {
-  fatiga: number;
-}
-
-export function Dashboard({ fatiga }: DashboardProps) {
+export function Dashboard() {
   const [state, setState] = useState<DriverState>(initialState);
-
-  // CORRECCIÓN 2: Sincronizamos la fatiga que calcula el modelo de IA con el estado local
-  useEffect(() => {
-    setState(prev => ({
-      ...prev,
-      fatigueLevel: fatiga,
-      // Activamos una alerta visual crítica si el nivel supera el 55%
-      isAlertActive: fatiga > 55 ? true : prev.isAlertActive
-    }));
-  }, [fatiga]);
 
   const handleSpeedChange = (speed: number) => {
     setState(prev => ({ ...prev, speed }));
@@ -55,6 +40,19 @@ export function Dashboard({ fatiga }: DashboardProps) {
 
   const handleCameraReady = useCallback(() => {
     setState(prev => ({ ...prev, isCameraActive: true }));
+  }, []);
+
+  const handleFatigaChange = useCallback((nuevaFatiga: number) => {
+    setState(prev => {
+      if (prev.fatigueLevel === nuevaFatiga && (nuevaFatiga <= 55 || prev.isAlertActive)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        fatigueLevel: nuevaFatiga,
+        isAlertActive: nuevaFatiga > 55 ? true : prev.isAlertActive,
+      };
+    });
   }, []);
 
   // Función auxiliar para determinar dinámicamente el texto del estado de alerta
@@ -77,15 +75,9 @@ export function Dashboard({ fatiga }: DashboardProps) {
       <main className={styles.main}>
         <section className={styles.cameraSection}>
           {/* CORRECCIÓN 3: Le pasamos el callback al CameraFeed interno para capturar la telemetría */}
-          <CameraFeed 
-            onReady={handleCameraReady} 
-            onFatigaChange={(nuevaFatiga) => {
-              setState(prev => ({
-                ...prev,
-                fatigueLevel: nuevaFatiga,
-                isAlertActive: nuevaFatiga > 55 ? true : prev.isAlertActive
-              }));
-            }}
+          <CameraFeed
+            onReady={handleCameraReady}
+            onFatigaChange={handleFatigaChange}
           />
         </section>
 

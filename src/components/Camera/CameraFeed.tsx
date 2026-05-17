@@ -51,10 +51,11 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const zoomLayerRef = useRef<HTMLDivElement>(null);
   const onReadyRef = useRef(onReady);
+  const onFatigaChangeRef = useRef(onFatigaChange);
+  const lastReportedFatigaRef = useRef<number | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isModelLoading, setIsModelLoading] = useState(true);
 
-  // Consumo del nuevo hook pasivo
   const { nivelFatiga, procesarFotogramaSomnolencia, resetFatiga } = useFaceDetection();
 
   const landmarkerRef = useRef<FaceLandmarker | null>(null);
@@ -64,13 +65,13 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
   const zoomStateRef = useRef<FaceZoomState>({ scale: 1, originX: 50, originY: 50 });
 
   onReadyRef.current = onReady;
+  onFatigaChangeRef.current = onFatigaChange;
 
-  // Propagación síncrona hacia App.tsx
   useEffect(() => {
-    if (onFatigaChange) {
-      onFatigaChange(nivelFatiga);
-    }
-  }, [nivelFatiga, onFatigaChange]);
+    if (lastReportedFatigaRef.current === nivelFatiga) return;
+    lastReportedFatigaRef.current = nivelFatiga;
+    onFatigaChangeRef.current?.(nivelFatiga);
+  }, [nivelFatiga]);
 
   const applyFaceZoom = (landmarks: NormalizedLandmark[] | null) => {
     const wrapper = wrapperRef.current;
