@@ -4,13 +4,11 @@ import { Speedometer } from './metrics/Speedometer';
 import { AlertIndicator } from './metrics/AlertIndicator';
 import { StatusBar } from './metrics/StatusBar';
 import { CameraFeed } from '../Camera/CameraFeed';
-
 export interface DriverState {
   speed: number;
   fatigueLevel: number;
   isAlertActive: boolean;
   isVoiceListening: boolean;
-  currentMessage: string | null;
   isCameraActive: boolean;
 }
 
@@ -19,7 +17,6 @@ const initialState: DriverState = {
   fatigueLevel: 0,
   isAlertActive: false,
   isVoiceListening: false,
-  currentMessage: null,
   isCameraActive: false,
 };
 
@@ -125,15 +122,6 @@ export function Dashboard() {
               {state.isVoiceListening ? 'Escuchando...' : 'Comando de Voz'}
             </button>
           </section>
-
-          {state.currentMessage && (
-            <section className={styles.messageSection}>
-              <div className={styles.messageCard}>
-                <span className={styles.messageIcon}>MSG</span>
-                <p className={styles.messageText}>{state.currentMessage}</p>
-              </div>
-            </section>
-          )}
         </div>
       </main>
 

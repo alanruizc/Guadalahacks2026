@@ -1,8 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { DrawingUtils, type FaceLandmarker, type NormalizedLandmark } from '@mediapipe/tasks-vision';
+import {
+  DrawingUtils,
+  type FaceLandmarker,
+  type GestureRecognizer,
+  type NormalizedLandmark,
+} from '@mediapipe/tasks-vision';
 import { initializeFaceLandmarker, detectFaces } from '../../services/faceLandmarker';
+import {
+  initializeGestureRecognizer,
+  recognizeGestures,
+  disposeGestureRecognizer,
+} from '../../services/gestureRecognizer';
+import type { DetectedGesture } from '../../services/gestures/extractGestures';
 import { drawFaceMesh } from './drawFaceMesh';
+import { drawHands } from './drawHands';
 import { useFaceDetection } from '../../hooks/useFaceDetection';
+import { useGestureRecognition } from '../../hooks/useGestureRecognition';
 import {
   computeFaceZoomTarget,
   faceZoomToTransform,
@@ -20,6 +33,7 @@ const VIDEO_HEIGHT = 480;
 interface CameraFeedProps {
   onReady?: (videoElement: HTMLVideoElement) => void;
   onFatigaChange?: (fatiga: number) => void;
+  onGestureConfirmed?: (gesture: DetectedGesture) => void;
 }
 
 function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
@@ -46,20 +60,25 @@ function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
   });
 }
 
-export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
+export function CameraFeed({ onReady, onFatigaChange, onGestureConfirmed }: CameraFeedProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const zoomLayerRef = useRef<HTMLDivElement>(null);
   const onReadyRef = useRef(onReady);
   const onFatigaChangeRef = useRef(onFatigaChange);
+  const onGestureConfirmedRef = useRef(onGestureConfirmed);
   const lastReportedFatigaRef = useRef<number | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isModelLoading, setIsModelLoading] = useState(true);
 
   const { nivelFatiga, procesarFotogramaSomnolencia, resetFatiga } = useFaceDetection();
+  const { procesarResultadoGesto } = useGestureRecognition({
+    onGestureConfirmed,
+  });
 
   const landmarkerRef = useRef<FaceLandmarker | null>(null);
+  const gestureRecognizerRef = useRef<GestureRecognizer | null>(null);
   const animationRef = useRef<number | null>(null);
   const lastFrameTimeRef = useRef(0);
   const lastDetectionTimeRef = useRef(-1);
@@ -68,6 +87,7 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
 
   onReadyRef.current = onReady;
   onFatigaChangeRef.current = onFatigaChange;
+  onGestureConfirmedRef.current = onGestureConfirmed;
 
   useEffect(() => {
     if (lastReportedFatigaRef.current === nivelFatiga) return;
@@ -100,7 +120,12 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
     zoomLayer.style.transform = faceZoomToTransform(zoom);
   };
 
-  const drawLandmarks = (landmarks: NormalizedLandmark[], frameWidth: number, frameHeight: number) => {
+  const drawFrameOverlay = (
+    faceLandmarks: NormalizedLandmark[] | null,
+    handLandmarks: NormalizedLandmark[][] | null,
+    frameWidth: number,
+    frameHeight: number,
+  ) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -114,13 +139,17 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
 
     ctx.clearRect(0, 0, frameWidth, frameHeight);
 
-    if (!drawingUtilsRef.current) {
-      drawingUtilsRef.current = new DrawingUtils(ctx);
-    } else {
-      drawingUtilsRef.current = new DrawingUtils(ctx);
+    if (!faceLandmarks?.length && !handLandmarks?.length) return;
+
+    drawingUtilsRef.current = new DrawingUtils(ctx);
+
+    if (faceLandmarks?.length) {
+      drawFaceMesh(drawingUtilsRef.current, faceLandmarks);
     }
 
-    drawFaceMesh(drawingUtilsRef.current, landmarks);
+    if (handLandmarks?.length) {
+      drawHands(drawingUtilsRef.current, handLandmarks);
+    }
   };
 
   useEffect(() => {
@@ -160,15 +189,19 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
 
         if (!mounted) return;
 
-        const landmarker = await initializeFaceLandmarker();
+        const [landmarker, gestureRecognizer] = await Promise.all([
+          initializeFaceLandmarker(),
+          initializeGestureRecognizer(),
+        ]);
         if (!mounted) return;
 
         landmarkerRef.current = landmarker;
+        gestureRecognizerRef.current = gestureRecognizer;
         setIsModelLoading(false);
         onReadyRef.current?.(video);
 
         const processFrame = () => {
-          if (!mounted || !videoRef.current || !landmarkerRef.current) {
+          if (!mounted || !videoRef.current || !landmarkerRef.current || !gestureRecognizerRef.current) {
             return;
           }
 
@@ -194,24 +227,32 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
 
           const frameWidth = activeVideo.videoWidth;
           const frameHeight = activeVideo.videoHeight;
-          const result = detectFaces(landmarkerRef.current, activeVideo, timestampMs);
+          const faceResult = detectFaces(landmarkerRef.current, activeVideo, timestampMs);
+          const gestureResult = recognizeGestures(
+            gestureRecognizerRef.current,
+            activeVideo,
+            timestampMs,
+          );
 
-          if (result && result.faceLandmarks && result.faceLandmarks.length > 0) {
-            const landmarks = result.faceLandmarks[0];
-            drawLandmarks(landmarks, frameWidth, frameHeight);
-            applyFaceZoom(landmarks);
+          procesarResultadoGesto(gestureResult);
 
-            const blendshapes = result.faceBlendshapes?.[0];
-            procesarFotogramaSomnolencia(activeVideo, landmarks, blendshapes);
+          const faceLandmarks =
+            faceResult?.faceLandmarks && faceResult.faceLandmarks.length > 0
+              ? faceResult.faceLandmarks[0]
+              : null;
+          const handLandmarks =
+            gestureResult.landmarks && gestureResult.landmarks.length > 0
+              ? gestureResult.landmarks
+              : null;
+
+          drawFrameOverlay(faceLandmarks, handLandmarks, frameWidth, frameHeight);
+
+          if (faceLandmarks) {
+            applyFaceZoom(faceLandmarks);
+            const blendshapes = faceResult.faceBlendshapes?.[0];
+            procesarFotogramaSomnolencia(activeVideo, faceLandmarks, blendshapes);
           } else {
-            const canvas = canvasRef.current;
-            const ctx = canvas?.getContext('2d');
-            if (ctx && canvas) {
-              ctx.clearRect(0, 0, canvas.width, canvas.height);
-            }
             applyFaceZoom(null);
-            
-            // Limpiar acumulados si no hay rostro en pantalla
             resetFatiga();
           }
 
@@ -239,8 +280,10 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
         videoRef.current.srcObject = null;
       }
       landmarkerRef.current = null;
+      gestureRecognizerRef.current = null;
+      disposeGestureRecognizer();
     };
-  }, [procesarFotogramaSomnolencia, resetFatiga]);
+  }, [procesarFotogramaSomnolencia, procesarResultadoGesto, resetFatiga]);
 
   const containerClass = `${styles.container} ${nivelFatiga > 55 ? styles.drowsyAlert : ''}`;
 
@@ -268,7 +311,7 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
           </div>
           {isModelLoading && (
             <div className={styles.loading}>
-              <span>Iniciando cámara y modelo de somnolencia...</span>
+              <span>Iniciando cámara y modelos de visión...</span>
             </div>
           )}
         </div>
