@@ -1,19 +1,69 @@
-.banner {
-  padding: 0.55rem 0.85rem;
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: min(280px, 42vw);
+  padding: 0.5rem 0.75rem;
   border-radius: 10px;
-  background: rgba(0, 212, 255, 0.12);
-  border: 1px solid rgba(0, 212, 255, 0.25);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 500;
-  color: #e8f8ff;
   line-height: 1.35;
-  animation: fadeIn 0.25s ease;
+  animation: slideIn 0.28s ease;
 }
 
-@keyframes fadeIn {
+.toast[data-variant='success'] {
+  background: rgba(0, 212, 170, 0.14);
+  border: 1px solid rgba(0, 212, 170, 0.35);
+  color: #b8ffe8;
+}
+
+.toast[data-variant='warning'] {
+  background: rgba(255, 170, 0, 0.12);
+  border: 1px solid rgba(255, 170, 0, 0.35);
+  color: #ffe8b0;
+}
+
+.toast[data-variant='info'] {
+  background: rgba(0, 212, 255, 0.12);
+  border: 1px solid rgba(0, 212, 255, 0.28);
+  color: #e8f8ff;
+}
+
+.icon {
+  flex-shrink: 0;
+  width: 1.15rem;
+  height: 1.15rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.toast[data-variant='success'] .icon {
+  background: rgba(0, 212, 170, 0.25);
+  color: #00d4aa;
+}
+
+.toast[data-variant='warning'] .icon {
+  background: rgba(255, 170, 0, 0.25);
+  color: #ffaa00;
+}
+
+.toast[data-variant='info'] .icon {
+  background: rgba(0, 212, 255, 0.2);
+  color: #00d4ff;
+}
+
+.text {
+  min-width: 0;
+}
+
+@keyframes slideIn {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(-6px);
   }
   to {
     opacity: 1;

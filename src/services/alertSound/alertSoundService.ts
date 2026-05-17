@@ -1,8 +1,8 @@
-const BEEP_INTERVAL_MS = 550;
+const BEEP_INTERVAL_MS = 220;
 const BEEP_DURATION_SEC = 0.18;
 const BEEP_VOLUME = 0.28;
 const BEEP_FREQ_HZ = 880;
-const BEAT_COUNT = 4;
+const BEAT_COUNT = 8;
 
 class AlertSoundService {
   private ctx: AudioContext | null = null;

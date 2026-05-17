@@ -2,11 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import styles from './Dashboard.module.css';
 import { Speedometer } from './metrics/Speedometer';
 import { AlertIndicator } from './metrics/AlertIndicator';
-import { StatusBar } from './metrics/StatusBar';
 import { CameraFeed } from '../Camera/CameraFeed';
 import { VoiceCommandHelp } from './VoiceCommandHelp';
 import { VoiceStatusStrip } from './VoiceStatusStrip';
-import { ActionFeedback } from './ActionFeedback';
+import {
+  ActionFeedback,
+  type NotificationMessage,
+  type NotificationVariant,
+} from './ActionFeedback';
 import { useVoiceCommand } from '../../hooks/useVoiceCommand';
 import { useVehicleSpeed } from '../../hooks/useVehicleSpeed';
 import { useAlertSound, useAlertSoundUnlock } from '../../hooks/useAlertSound';
@@ -37,7 +40,7 @@ const initialState: DriverState = {
 export function Dashboard() {
   const [state, setState] = useState<DriverState>(initialState);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<NotificationMessage | null>(null);
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
@@ -55,9 +58,9 @@ export function Dashboard() {
   useAlertSoundUnlock();
   useAlertSound(state.isAlertActive, state.isMuted);
 
-  const showFeedback = useCallback((message: string) => {
+  const showFeedback = useCallback((text: string, variant: NotificationVariant = 'info') => {
     if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
-    setFeedback(message);
+    setFeedback({ text, variant });
     feedbackTimerRef.current = setTimeout(() => {
       setFeedback(null);
       feedbackTimerRef.current = null;
@@ -89,10 +92,10 @@ export function Dashboard() {
         const v = voiceRef.current;
         if (v.isListening) {
           v.stop();
-          showFeedback('Micrófono pausado');
+          showFeedback('Micrófono pausado', 'info');
         } else {
           void v.start();
-          showFeedback('Micrófono activo');
+          showFeedback('Micrófono activo', 'info');
         }
         return;
       }
@@ -101,7 +104,10 @@ export function Dashboard() {
         const nextMuted = !stateRef.current.isMuted;
         if (nextMuted) alertSoundService.stop();
         setState((prev) => ({ ...prev, isMuted: nextMuted }));
-        showFeedback(getActionMessage('mute_alerts', { ...ctx, isMuted: !nextMuted }));
+        showFeedback(
+          getActionMessage('mute_alerts', { ...ctx, isMuted: !nextMuted }),
+          nextMuted ? 'warning' : 'success',
+        );
         return;
       }
 
@@ -112,23 +118,23 @@ export function Dashboard() {
           isAlertActive: false,
           fatigueLevel: 0,
         }));
-        showFeedback(getActionMessage(commandId, { ...ctx, fatigueLevel: 0 }));
+        showFeedback(getActionMessage(commandId, { ...ctx, fatigueLevel: 0 }), 'success');
         return;
       }
 
       if (commandId === 'rest_mode') {
         setState((prev) => ({ ...prev, isAlertActive: true }));
-        showFeedback(getActionMessage('rest_mode', ctx));
+        showFeedback(getActionMessage('rest_mode', ctx), 'warning');
         return;
       }
 
       if (commandId === 'report_status' || commandId === 'report_speed') {
-        showFeedback(getActionMessage(commandId, ctx));
+        showFeedback(getActionMessage(commandId, ctx), 'info');
         return;
       }
 
       if (commandId === 'call_emergency') {
-        showFeedback(getActionMessage('call_emergency', ctx));
+        showFeedback(getActionMessage('call_emergency', ctx), 'warning');
         setTimeout(() => {
           window.location.href = 'tel:911';
         }, CALL_DELAY_MS);
@@ -136,7 +142,7 @@ export function Dashboard() {
       }
 
       if (commandId === 'call_contact') {
-        showFeedback(getActionMessage('call_contact', ctx));
+        showFeedback(getActionMessage('call_contact', ctx), 'warning');
         setTimeout(() => {
           window.location.href = `tel:${EMERGENCY_CONTACT}`;
         }, CALL_DELAY_MS);
@@ -201,15 +207,12 @@ export function Dashboard() {
     <div className={styles.dashboard}>
       <header className={styles.header}>
         <div className={styles.headerBrand}>
-          <h1 className={styles.title}>Drive Copilot</h1>
+          <h1 className={styles.title}>Copiloto</h1>
           <p className={styles.subtitle}>Asistente de seguridad al volante</p>
         </div>
-        <StatusBar
-          isMonitoring={state.isCameraActive}
-          listenPhase={voice.listenPhase}
-          gpsStatus={gpsStatus}
-          isModelLoading={voice.modelStatus === 'loading'}
-        />
+        <div className={styles.headerNotification}>
+          <ActionFeedback message={feedback} />
+        </div>
       </header>
 
       <main className={styles.main}>
@@ -222,8 +225,6 @@ export function Dashboard() {
         </section>
 
         <aside className={styles.sidePanel}>
-          <ActionFeedback message={feedback} />
-
           <div className={styles.statsGrid}>
             <Speedometer
               speed={gpsSpeed}
