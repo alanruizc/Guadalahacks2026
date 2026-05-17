@@ -21,6 +21,11 @@
   box-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
 }
 
+.dot.armed {
+  background: #00d4aa;
+  box-shadow: 0 0 8px rgba(0, 212, 170, 0.55);
+}
+
 .label {
   font-size: 0.7rem;
   color: rgba(255, 255, 255, 0.5);

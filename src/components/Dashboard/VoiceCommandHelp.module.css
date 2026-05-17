@@ -1,17 +1,24 @@
 .help {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  padding: 0.85rem 1rem;
+  padding: 0 0.5rem 0.25rem;
 }
 
-.title {
-  margin: 0 0 0.35rem;
-  font-size: 0.8rem;
-  font-weight: 600;
+.wakeWord {
+  margin: 0 0 0.45rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(0, 212, 255, 0.1);
+  font-size: 0.7rem;
   color: rgba(255, 255, 255, 0.85);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  line-height: 1.4;
+}
+
+.wakeWord strong {
+  color: #00d4ff;
+}
+
+.wakeWord em {
+  color: rgba(255, 255, 255, 0.55);
+  font-style: normal;
 }
 
 .hint {
@@ -45,4 +52,30 @@
   font-size: 0.7rem;
   color: rgba(255, 255, 255, 0.5);
   font-style: italic;
+}
+
+.subtitle {
+  margin: 0.75rem 0 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.55);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.equiv {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.gesture {
+  font-size: 0.68rem;
+  color: rgba(255, 200, 100, 0.95);
+}
+
+.sep {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.35);
 }
