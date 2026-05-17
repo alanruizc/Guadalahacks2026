@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FaceLandmarker, NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { initializeFaceLandmarker, detectFaces } from '../../services/faceLandmarker';
+import {
+  computeFaceZoomTarget,
+  faceZoomToTransform,
+  getLandmarkBounds,
+  smoothFaceZoom,
+  type FaceZoomState,
+} from './faceZoom';
 import styles from './CameraFeed.module.css';
 
 const FPS = 30;
@@ -39,6 +46,8 @@ function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
 export function CameraFeed({ onReady }: CameraFeedProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const zoomLayerRef = useRef<HTMLDivElement>(null);
   const onReadyRef = useRef(onReady);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isModelLoading, setIsModelLoading] = useState(true);
@@ -47,17 +56,48 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
   const animationRef = useRef<number | null>(null);
   const lastFrameTimeRef = useRef(0);
   const lastDetectionTimeRef = useRef(-1);
+  const zoomStateRef = useRef<FaceZoomState>({ scale: 1, originX: 50, originY: 50 });
 
   onReadyRef.current = onReady;
 
-  const drawLandmarks = (landmarks: NormalizedLandmark[]) => {
+  const applyFaceZoom = (landmarks: NormalizedLandmark[] | null) => {
+    const wrapper = wrapperRef.current;
+    const zoomLayer = zoomLayerRef.current;
+    if (!wrapper || !zoomLayer) return;
+
+    const displayWidth = wrapper.clientWidth;
+    const displayHeight = wrapper.clientHeight;
+    if (displayWidth === 0 || displayHeight === 0) return;
+
+    const target =
+      landmarks && landmarks.length > 0
+        ? computeFaceZoomTarget(getLandmarkBounds(landmarks), displayWidth, displayHeight)
+        : { scale: 1, originX: 50, originY: 50 };
+
+    zoomStateRef.current = smoothFaceZoom(
+      zoomStateRef.current,
+      target,
+      Boolean(landmarks && landmarks.length > 0),
+    );
+
+    const zoom = zoomStateRef.current;
+    zoomLayer.style.transformOrigin = `${zoom.originX}% ${zoom.originY}%`;
+    zoomLayer.style.transform = faceZoomToTransform(zoom);
+  };
+
+  const drawLandmarks = (landmarks: NormalizedLandmark[], frameWidth: number, frameHeight: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
+    if (canvas.width !== frameWidth || canvas.height !== frameHeight) {
+      canvas.width = frameWidth;
+      canvas.height = frameHeight;
+    }
+
+    ctx.clearRect(0, 0, frameWidth, frameHeight);
     ctx.fillStyle = '#00d4ff';
     ctx.strokeStyle = '#00d4ff';
     ctx.lineWidth = 1.5;
@@ -79,8 +119,8 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
       const p2 = landmarks[faceOutline[i + 1]];
       if (p1 && p2) {
         ctx.beginPath();
-        ctx.moveTo(p1.x * VIDEO_WIDTH, p1.y * VIDEO_HEIGHT);
-        ctx.lineTo(p2.x * VIDEO_WIDTH, p2.y * VIDEO_HEIGHT);
+        ctx.moveTo(p1.x * frameWidth, p1.y * frameHeight);
+        ctx.lineTo(p2.x * frameWidth, p2.y * frameHeight);
         ctx.stroke();
       }
     }
@@ -93,8 +133,8 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
       const p2 = landmarks[leftEye[i + 1]];
       if (p1 && p2) {
         ctx.beginPath();
-        ctx.moveTo(p1.x * VIDEO_WIDTH, p1.y * VIDEO_HEIGHT);
-        ctx.lineTo(p2.x * VIDEO_WIDTH, p2.y * VIDEO_HEIGHT);
+        ctx.moveTo(p1.x * frameWidth, p1.y * frameHeight);
+        ctx.lineTo(p2.x * frameWidth, p2.y * frameHeight);
         ctx.stroke();
       }
     }
@@ -104,15 +144,15 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
       const p2 = landmarks[rightEye[i + 1]];
       if (p1 && p2) {
         ctx.beginPath();
-        ctx.moveTo(p1.x * VIDEO_WIDTH, p1.y * VIDEO_HEIGHT);
-        ctx.lineTo(p2.x * VIDEO_WIDTH, p2.y * VIDEO_HEIGHT);
+        ctx.moveTo(p1.x * frameWidth, p1.y * frameHeight);
+        ctx.lineTo(p2.x * frameWidth, p2.y * frameHeight);
         ctx.stroke();
       }
     }
 
     for (const point of landmarks) {
       ctx.beginPath();
-      ctx.arc(point.x * VIDEO_WIDTH, point.y * VIDEO_HEIGHT, 2, 0, Math.PI * 2);
+      ctx.arc(point.x * frameWidth, point.y * frameHeight, 2, 0, Math.PI * 2);
       ctx.fill();
     }
   };
@@ -186,15 +226,21 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
           }
           lastDetectionTimeRef.current = timestampMs;
 
+          const frameWidth = activeVideo.videoWidth;
+          const frameHeight = activeVideo.videoHeight;
           const result = detectFaces(landmarkerRef.current, activeVideo, timestampMs);
+
           if (result.faceLandmarks.length > 0) {
-            drawLandmarks(result.faceLandmarks[0]);
+            const landmarks = result.faceLandmarks[0];
+            drawLandmarks(landmarks, frameWidth, frameHeight);
+            applyFaceZoom(landmarks);
           } else {
             const canvas = canvasRef.current;
             const ctx = canvas?.getContext('2d');
             if (ctx && canvas) {
               ctx.clearRect(0, 0, canvas.width, canvas.height);
             }
+            applyFaceZoom(null);
           }
 
           animationRef.current = requestAnimationFrame(processFrame);
@@ -235,9 +281,20 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
           <span>{cameraError}</span>
         </div>
       ) : (
-        <div className={styles.videoWrapper}>
-          <video ref={videoRef} className={styles.video} playsInline muted autoPlay />
-          <canvas ref={canvasRef} className={styles.overlay} width={VIDEO_WIDTH} height={VIDEO_HEIGHT} />
+        <div ref={wrapperRef} className={styles.videoWrapper}>
+          <div
+            ref={zoomLayerRef}
+            className={styles.zoomLayer}
+            style={{ transform: 'scaleX(-1) scale(1)', transformOrigin: '50% 50%' }}
+          >
+            <video ref={videoRef} className={styles.video} playsInline muted autoPlay />
+            <canvas
+              ref={canvasRef}
+              className={styles.overlay}
+              width={VIDEO_WIDTH}
+              height={VIDEO_HEIGHT}
+            />
+          </div>
           {isModelLoading && (
             <div className={styles.loading}>
               <span>Iniciando cámara y modelo...</span>
