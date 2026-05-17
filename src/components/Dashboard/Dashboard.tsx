@@ -1,9 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useRef } from 'react';
 import styles from './Dashboard.module.css';
 import { Speedometer } from './metrics/Speedometer';
 import { AlertIndicator } from './metrics/AlertIndicator';
 import { StatusBar } from './metrics/StatusBar';
 import { CameraFeed } from '../Camera/CameraFeed';
+
 export interface DriverState {
   speed: number;
   fatigueLevel: number;
@@ -20,9 +21,45 @@ const initialState: DriverState = {
   isCameraActive: false,
 };
 
+// ─── Umbral y cooldown ────────────────────────────────────────────────────────
+const FATIGUE_ALERT_THRESHOLD = 70;         // % para disparar WhatsApp
+const ALERT_COOLDOWN_MS = 5 * 60 * 1000;   // 5 minutos entre mensajes
+
 export function Dashboard() {
   const [state, setState] = useState<DriverState>(initialState);
 
+  // Ref para evitar spam: guarda el timestamp del último mensaje enviado
+  const lastAlertSentRef = useRef<number>(0);
+  // Ref para saber si ya estamos en estado de alerta activa (evita envíos repetidos
+  // mientras la fatiga sigue >70 sin bajar)
+  const alertActiveRef = useRef<boolean>(false);
+
+  // ─── WhatsApp alert ──────────────────────────────────────────────────────
+  const sendWhatsAppAlert = useCallback(async (nivelFatiga: number) => {
+    const ahora = Date.now();
+    if (ahora - lastAlertSentRef.current < ALERT_COOLDOWN_MS) return; // cooldown activo
+
+    lastAlertSentRef.current = ahora;
+
+    try {
+      const res = await fetch('http://localhost:3001/send-alert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nivelFatiga }),
+      });
+
+      if (!res.ok) {
+        console.error('[WhatsApp] Error en servidor:', await res.text());
+      } else {
+        const data = await res.json();
+        console.log(`[WhatsApp] Alertas enviadas: ${data.enviados}, fallidas: ${data.fallidas}`);
+      }
+    } catch (err) {
+      console.error('[WhatsApp] No se pudo conectar al servidor de alertas:', err);
+    }
+  }, []);
+
+  // ─── Handlers ────────────────────────────────────────────────────────────
   const handleSpeedChange = (speed: number) => {
     setState(prev => ({ ...prev, speed }));
   };
@@ -32,6 +69,9 @@ export function Dashboard() {
   };
 
   const handleAlertAck = () => {
+    // Al reconocer la alerta, reseteamos el estado para permitir
+    // que se vuelva a disparar si la fatiga sube de nuevo
+    alertActiveRef.current = false;
     setState(prev => ({ ...prev, isAlertActive: false, fatigueLevel: 0 }));
   };
 
@@ -50,11 +90,25 @@ export function Dashboard() {
         isAlertActive: nuevaFatiga > 55 ? true : prev.isAlertActive,
       };
     });
-  }, []);
 
-  // Función auxiliar para determinar dinámicamente el texto del estado de alerta
+    // ── Lógica de alerta WhatsApp ──────────────────────────────────────────
+    if (nuevaFatiga >= FATIGUE_ALERT_THRESHOLD) {
+      if (!alertActiveRef.current) {
+        // Primera vez que cruza el umbral en este evento
+        alertActiveRef.current = true;
+        sendWhatsAppAlert(nuevaFatiga);
+      }
+    } else {
+      // Fatiga bajó del umbral → permite nuevo disparo en el siguiente evento
+      if (alertActiveRef.current) {
+        alertActiveRef.current = false;
+      }
+    }
+  }, [sendWhatsAppAlert]);
+
+  // ─── Texto dinámico de estado ─────────────────────────────────────────────
   const getAlertStatusText = () => {
-    if (state.fatigueLevel > 60) return '🚨 DISTRAIDO / SOMNOLENCIA';
+    if (state.fatigueLevel >= FATIGUE_ALERT_THRESHOLD) return '🚨 DISTRAIDO / SOMNOLENCIA';
     if (state.fatigueLevel > 30) return '⚠️ FATIGA LEVE';
     return '🟢 NORMAL';
   };
@@ -71,7 +125,6 @@ export function Dashboard() {
 
       <main className={styles.main}>
         <section className={styles.cameraSection}>
-          {/* CORRECCIÓN 3: Le pasamos el callback al CameraFeed interno para capturar la telemetría */}
           <CameraFeed
             onReady={handleCameraReady}
             onFatigaChange={handleFatigaChange}
@@ -100,7 +153,6 @@ export function Dashboard() {
 
             <div className={styles.metricCard}>
               <h3 className={styles.metricTitle}>Estado de Alerta</h3>
-              {/* CORRECCIÓN 4: Render dinámico del texto de alerta según el porcentaje */}
               <div style={{ marginBottom: '10px', fontWeight: 'bold', fontSize: '1.1rem' }}>
                 {getAlertStatusText()}
               </div>
