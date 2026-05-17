@@ -1,11 +1,19 @@
 import styles from './Speedometer.module.css';
+import type { VehicleSpeedStatus } from '../../../hooks/useVehicleSpeed';
 
 interface SpeedometerProps {
   speed: number;
-  onSpeedChange: (speed: number) => void;
+  gpsStatus: VehicleSpeedStatus;
+  gpsStatusLabel: string;
+  onRetryGps?: () => void;
 }
 
-export function Speedometer({ speed, onSpeedChange }: SpeedometerProps) {
+export function Speedometer({
+  speed,
+  gpsStatus,
+  gpsStatusLabel,
+  onRetryGps,
+}: SpeedometerProps) {
   const percentage = Math.min((speed / 180) * 100, 100);
   const rotation = (percentage / 100) * 270 - 135;
 
@@ -14,6 +22,10 @@ export function Speedometer({ speed, onSpeedChange }: SpeedometerProps) {
     if (speed < 100) return '#ffd93d';
     return '#ff6b6b';
   };
+
+  const canRetry =
+    onRetryGps &&
+    (gpsStatus === 'denied' || gpsStatus === 'unavailable' || gpsStatus === 'error');
 
   return (
     <div className={styles.container}>
@@ -54,14 +66,36 @@ export function Speedometer({ speed, onSpeedChange }: SpeedometerProps) {
           <span className={styles.speedUnit}>km/h</span>
         </div>
       </div>
-      <input
-        type="range"
-        min="0"
-        max="180"
-        value={speed}
-        onChange={(e) => onSpeedChange(Number(e.target.value))}
-        className={styles.slider}
-      />
+
+      {gpsStatusLabel && (
+        <div
+          className={styles.gpsStatus}
+          data-status={gpsStatus}
+          role={canRetry ? 'button' : undefined}
+          tabIndex={canRetry ? 0 : undefined}
+          onClick={canRetry ? onRetryGps : undefined}
+          onKeyDown={
+            canRetry
+              ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onRetryGps?.();
+                  }
+                }
+              : undefined
+          }
+        >
+          <span
+            className={styles.gpsDot}
+            data-active={gpsStatus === 'tracking'}
+            aria-hidden
+          />
+          <span className={styles.gpsLabel}>
+            {gpsStatusLabel}
+            {canRetry ? ' · Toca para reintentar' : ''}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
