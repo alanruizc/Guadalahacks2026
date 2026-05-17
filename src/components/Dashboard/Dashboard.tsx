@@ -6,6 +6,8 @@ import { StatusBar } from './metrics/StatusBar';
 import { CameraFeed } from '../Camera/CameraFeed';
 import { useVoiceCommand } from '../../hooks/useVoiceCommand';
 import { useVehicleSpeed } from '../../hooks/useVehicleSpeed';
+import { useAlertSound, useAlertSoundUnlock } from '../../hooks/useAlertSound';
+import { alertSoundService } from '../../services/alertSound/alertSoundService';
 import { resolveGestureCommand } from '../../services/gestures/gestureCommands';
 import type { VoiceCommandId } from '../../services/gestures/gestureCommands';
 import type { DetectedGesture } from '../../services/gestures/extractGestures';
@@ -47,14 +49,19 @@ export function Dashboard() {
 
   const displaySpeed = isGpsTracking ? gpsSpeed : state.fallbackSpeed;
 
+  useAlertSoundUnlock();
+  useAlertSound(state.isAlertActive, state.isMuted);
+
   const executeCommand = useCallback((commandId: VoiceCommandId) => {
     setState((prev) => {
       switch (commandId) {
         case 'ack_alert':
+          alertSoundService.stop();
           speak('Alerta confirmada');
           return { ...prev, isAlertActive: false, fatigueLevel: 0 };
 
         case 'calibrate':
+          alertSoundService.stop();
           speak('Fatiga reiniciada a cero');
           return { ...prev, fatigueLevel: 0, isAlertActive: false };
 
@@ -64,6 +71,7 @@ export function Dashboard() {
 
         case 'mute_alerts': {
           const nextMuted = !prev.isMuted;
+          if (nextMuted) alertSoundService.stop();
           speak(nextMuted ? 'Alertas silenciadas' : 'Alertas activadas');
           return { ...prev, isMuted: nextMuted };
         }
@@ -111,6 +119,7 @@ export function Dashboard() {
     useVoiceCommand(executeCommand);
 
   const handleVoiceToggle = () => {
+    alertSoundService.unlock();
     if (modelStatus === 'error') {
       retryModel();
       return;
@@ -123,6 +132,7 @@ export function Dashboard() {
   };
 
   const handleAlertAck = () => {
+    alertSoundService.stop();
     setState((prev) => ({ ...prev, isAlertActive: false, fatigueLevel: 0 }));
   };
 
