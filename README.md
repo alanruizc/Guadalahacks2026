@@ -18,3 +18,6 @@ pnpm dev
 
 En http://localhost:5173.
 
+Link al video en youtube: https://youtu.be/oHWPDIlbi6c?si=S_PcBCvoL2U96I6_
+
+
