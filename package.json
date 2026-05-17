@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "postinstall": "node copy-wasm.js",
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node copy-wasm.js && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -29,6 +30,7 @@
     "globals": "^17.6.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "vite-plugin-qrcode": "^0.4.1"
   }
 }
