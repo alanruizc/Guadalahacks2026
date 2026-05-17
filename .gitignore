@@ -23,6 +23,5 @@ dist-ssr
 *.sln
 *.sw?
 pnpm-lock.yaml
-public/models
 public/wasm
 .cursorroles

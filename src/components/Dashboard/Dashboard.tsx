@@ -5,6 +5,7 @@ import { AlertIndicator } from './metrics/AlertIndicator';
 import { StatusBar } from './metrics/StatusBar';
 import { CameraFeed } from '../Camera/CameraFeed';
 import { useVoiceCommand } from '../../hooks/useVoiceCommand';
+import { useVehicleSpeed } from '../../hooks/useVehicleSpeed';
 import { resolveGestureCommand } from '../../services/gestures/gestureCommands';
 import type { VoiceCommandId } from '../../services/gestures/gestureCommands';
 import type { DetectedGesture } from '../../services/gestures/extractGestures';
@@ -12,7 +13,7 @@ import type { DetectedGesture } from '../../services/gestures/extractGestures';
 const EMERGENCY_CONTACT = localStorage.getItem('emergency_contact') ?? '+521234567890';
 
 interface DriverState {
-  speed: number;
+  fallbackSpeed: number;
   fatigueLevel: number;
   isAlertActive: boolean;
   isCameraActive: boolean;
@@ -20,7 +21,7 @@ interface DriverState {
 }
 
 const initialState: DriverState = {
-  speed: 0,
+  fallbackSpeed: 0,
   fatigueLevel: 0,
   isAlertActive: false,
   isCameraActive: false,
@@ -36,6 +37,15 @@ function speak(text: string): void {
 
 export function Dashboard() {
   const [state, setState] = useState<DriverState>(initialState);
+  const {
+    speed: gpsSpeed,
+    status: gpsStatus,
+    statusLabel: gpsStatusLabel,
+    isTracking: isGpsTracking,
+    retry: retryGps,
+  } = useVehicleSpeed();
+
+  const displaySpeed = isGpsTracking ? gpsSpeed : state.fallbackSpeed;
 
   const executeCommand = useCallback((commandId: VoiceCommandId) => {
     setState((prev) => {
@@ -59,10 +69,12 @@ export function Dashboard() {
         }
 
         case 'increase_speed':
-          return { ...prev, speed: Math.min(prev.speed + 10, 220) };
+          if (isGpsTracking) return prev;
+          return { ...prev, fallbackSpeed: Math.min(prev.fallbackSpeed + 10, 220) };
 
         case 'decrease_speed':
-          return { ...prev, speed: Math.max(prev.speed - 10, 0) };
+          if (isGpsTracking) return prev;
+          return { ...prev, fallbackSpeed: Math.max(prev.fallbackSpeed - 10, 0) };
 
         // report_status y las llamadas no modifican el estado; se manejan fuera
         default:
@@ -93,7 +105,7 @@ export function Dashboard() {
       speak('Llamando a tu contacto');
       setTimeout(() => { window.location.href = `tel:${EMERGENCY_CONTACT}`; }, 1200);
     }
-  }, []);
+  }, [isGpsTracking]);
 
   const { isListening, modelStatus, modelProgress, lastTranscript, start, stop, retryModel } =
     useVoiceCommand(executeCommand);
@@ -108,10 +120,6 @@ export function Dashboard() {
     } else {
       void start();
     }
-  };
-
-  const handleSpeedChange = (speed: number) => {
-    setState((prev) => ({ ...prev, speed }));
   };
 
   const handleAlertAck = () => {
@@ -174,7 +182,12 @@ export function Dashboard() {
 
         <div className={styles.content}>
           <section className={styles.speedometerSection}>
-            <Speedometer speed={state.speed} onSpeedChange={handleSpeedChange} />
+            <Speedometer
+              speed={displaySpeed}
+              gpsStatus={gpsStatus}
+              gpsStatusLabel={gpsStatusLabel}
+              onRetryGps={retryGps}
+            />
           </section>
 
           <section className={styles.metricsSection}>
