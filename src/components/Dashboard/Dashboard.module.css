@@ -181,6 +181,14 @@
 .alertStatus[data-level='warning']  { color: #ffaa00; }
 .alertStatus[data-level='ok']       { color: #00d4aa; }
 
+.messageCard[data-kind='ok'] {
+  border-color: rgba(0, 212, 170, 0.35);
+}
+
+.messageCard[data-kind='unknown'] {
+  border-color: rgba(255, 170, 0, 0.35);
+}
+
 .messageCard {
   display: flex;
   align-items: center;

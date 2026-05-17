@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SpeechRecognitionService, type ModelStatus, type ModelProgress } from '../services/speechRecognition';
 import { parseVoiceCommand } from '../services/speechRecognition/commandParser';
-import type { VoiceCommandId } from '../services/gestures/gestureCommands';
+import {
+  WebSpeechRecognizer,
+  isWebSpeechAvailable,
+} from '../services/speechRecognition/webSpeechRecognizer';
+import { getCommandLabel, type VoiceCommandId } from '../services/voice/voiceCommands';
 
-const CHUNK_MS = 3000;
+const CHUNK_MS = 1500;
 const MIME_TYPE = 'audio/webm;codecs=opus';
+const USE_WEB_SPEECH = isWebSpeechAvailable();
 
 async function blobToFloat32(blob: Blob): Promise<{ audio: Float32Array; samplingRate: number }> {
   const buffer = await blob.arrayBuffer();
@@ -17,51 +22,84 @@ async function blobToFloat32(blob: Blob): Promise<{ audio: Float32Array; samplin
   }
 }
 
+export type VoiceEngine = 'web' | 'whisper' | null;
+
 export interface UseVoiceCommandReturn {
   isListening: boolean;
   modelStatus: ModelStatus;
   modelProgress: number;
+  engine: VoiceEngine;
   lastTranscript: string;
+  lastCommandId: VoiceCommandId | null;
+  lastFeedback: string;
   start: () => Promise<void>;
   stop: () => void;
   retryModel: () => void;
 }
 
-// Singleton: el modelo se descarga una sola vez y persiste en el tab
-const svc = new SpeechRecognitionService();
+const whisperSvc = new SpeechRecognitionService();
 
 export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVoiceCommandReturn {
   const [isListening, setIsListening] = useState(false);
-  const [modelStatus, setModelStatus] = useState<ModelStatus>('idle');
-  const [modelProgress, setModelProgress] = useState(0);
+  const [modelStatus, setModelStatus] = useState<ModelStatus>(USE_WEB_SPEECH ? 'ready' : 'idle');
+  const [modelProgress, setModelProgress] = useState(USE_WEB_SPEECH ? 100 : 0);
+  const [engine, setEngine] = useState<VoiceEngine>(USE_WEB_SPEECH ? 'web' : null);
   const [lastTranscript, setLastTranscript] = useState('');
+  const [lastCommandId, setLastCommandId] = useState<VoiceCommandId | null>(null);
+  const [lastFeedback, setLastFeedback] = useState('');
 
   const streamRef = useRef<MediaStream | null>(null);
   const activeRef = useRef(false);
   const chunkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mimeRef = useRef(MIME_TYPE);
-  const modelReadyRef = useRef(false);
+  const modelReadyRef = useRef(USE_WEB_SPEECH);
+  const webSpeechRef = useRef<WebSpeechRecognizer | null>(null);
   const onCommandRef = useRef(onCommand);
   onCommandRef.current = onCommand;
 
-  const bindServiceCallbacks = useCallback(() => {
-    svc.onStatusChange = (status) => {
-      setModelStatus(status);
-      modelReadyRef.current = status === 'ready';
+  const handleTranscript = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || !activeRef.current) return;
+
+    setLastTranscript(trimmed);
+    const commandId = parseVoiceCommand(trimmed);
+    setLastCommandId(commandId);
+
+    if (commandId) {
+      setLastFeedback(getCommandLabel(commandId));
+      onCommandRef.current?.(commandId);
+    } else {
+      setLastFeedback('No reconocí un comando. Prueba: "estado" o "confirmar alerta".');
+    }
+  }, []);
+
+  const bindWhisperCallbacks = useCallback(() => {
+    whisperSvc.onStatusChange = (status) => {
+      if (!USE_WEB_SPEECH || status !== 'ready') {
+        setModelStatus(status);
+      }
+      modelReadyRef.current = USE_WEB_SPEECH || status === 'ready';
+      if (status === 'ready' && !USE_WEB_SPEECH) {
+        setEngine('whisper');
+      }
     };
-    svc.onProgress = (p: ModelProgress) => {
-      if (p.progress !== undefined) setModelProgress(Math.round(p.progress));
+    whisperSvc.onProgress = (p: ModelProgress) => {
+      if (!USE_WEB_SPEECH && p.progress !== undefined) {
+        setModelProgress(Math.round(p.progress));
+      }
     };
   }, []);
 
-  const loadModel = useCallback(() => {
-    bindServiceCallbacks();
-    svc.initialize();
-  }, [bindServiceCallbacks]);
+  const loadWhisper = useCallback(() => {
+    bindWhisperCallbacks();
+    whisperSvc.initialize();
+  }, [bindWhisperCallbacks]);
 
   useEffect(() => {
-    loadModel();
-  }, [loadModel]);
+    if (!USE_WEB_SPEECH) {
+      loadWhisper();
+    }
+  }, [loadWhisper]);
 
   const recordChunk = useCallback(() => {
     if (!activeRef.current || !streamRef.current) return;
@@ -80,14 +118,10 @@ export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVo
         try {
           const blob = new Blob(chunks, { type: mime });
           const { audio, samplingRate } = await blobToFloat32(blob);
-          const text = await svc.transcribe(audio, samplingRate);
-          if (text && activeRef.current) {
-            setLastTranscript(text);
-            const commandId = parseVoiceCommand(text);
-            if (commandId) onCommandRef.current?.(commandId);
-          }
+          const text = await whisperSvc.transcribe(audio, samplingRate);
+          if (text) handleTranscript(text);
         } catch {
-          // Transcripción fallida silenciosa; reintenta en el siguiente chunk
+          // reintenta en el siguiente chunk
         }
       }
       if (activeRef.current) {
@@ -99,41 +133,91 @@ export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVo
     chunkTimerRef.current = setTimeout(() => {
       if (recorder.state === 'recording') recorder.stop();
     }, CHUNK_MS);
-  }, []);
+  }, [handleTranscript]);
+
+  const startWhisper = useCallback(async () => {
+    if (!modelReadyRef.current) {
+      setLastFeedback('Cargando reconocimiento de voz…');
+      loadWhisper();
+      return;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    streamRef.current = stream;
+    mimeRef.current = MediaRecorder.isTypeSupported(MIME_TYPE) ? MIME_TYPE : 'audio/webm';
+    setEngine('whisper');
+    recordChunk();
+  }, [loadWhisper, recordChunk]);
 
   const start = useCallback(async () => {
     if (activeRef.current) return;
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      streamRef.current = stream;
-      mimeRef.current = MediaRecorder.isTypeSupported(MIME_TYPE) ? MIME_TYPE : 'audio/webm';
       activeRef.current = true;
       setIsListening(true);
-      recordChunk();
+      setLastFeedback('Escuchando…');
+      setLastTranscript('');
+      setLastCommandId(null);
+
+      if (USE_WEB_SPEECH) {
+        const web = new WebSpeechRecognizer();
+        webSpeechRef.current = web;
+        const ok = web.start(handleTranscript);
+        if (ok) {
+          setEngine('web');
+          setModelStatus('ready');
+          return;
+        }
+        webSpeechRef.current = null;
+      }
+
+      await startWhisper();
     } catch {
-      // Permiso de micrófono denegado o no disponible
+      activeRef.current = false;
+      setIsListening(false);
+      setLastFeedback('No se pudo usar el micrófono. Revisa los permisos.');
     }
-  }, [recordChunk]);
+  }, [handleTranscript, startWhisper]);
 
   const stop = useCallback(() => {
     activeRef.current = false;
+    webSpeechRef.current?.stop();
+    webSpeechRef.current = null;
+
     if (chunkTimerRef.current) {
       clearTimeout(chunkTimerRef.current);
       chunkTimerRef.current = null;
     }
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+
     setIsListening(false);
     setLastTranscript('');
+    setLastCommandId(null);
+    setLastFeedback('');
+    if (USE_WEB_SPEECH) {
+      setEngine('web');
+    }
   }, []);
 
   const retryModel = useCallback(() => {
-    svc.destroy();
+    whisperSvc.destroy();
     setModelProgress(0);
-    loadModel();
-  }, [loadModel]);
+    loadWhisper();
+  }, [loadWhisper]);
 
   useEffect(() => () => { stop(); }, [stop]);
 
-  return { isListening, modelStatus, modelProgress, lastTranscript, start, stop, retryModel };
+  return {
+    isListening,
+    modelStatus,
+    modelProgress,
+    engine,
+    lastTranscript,
+    lastCommandId,
+    lastFeedback,
+    start,
+    stop,
+    retryModel,
+  };
 }
