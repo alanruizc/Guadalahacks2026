@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SpeechRecognitionService, type ModelStatus, type ModelProgress } from '../services/speechRecognition';
-import { parseVoiceCommand } from '../services/speechRecognition/commandParser';
+import {
+  COMMAND_ARMED_MS,
+  WAKE_WORD_LABEL,
+  processCopilotUtterance,
+} from '../services/speechRecognition/wakeWord';
 import {
   WebSpeechRecognizer,
   isWebSpeechAvailable,
@@ -23,9 +27,16 @@ async function blobToFloat32(blob: Blob): Promise<{ audio: Float32Array; samplin
 }
 
 export type VoiceEngine = 'web' | 'whisper' | null;
+export type VoiceListenPhase = 'off' | 'wake' | 'armed';
+
+export interface UseVoiceCommandOptions {
+  onCommand?: (id: VoiceCommandId) => void;
+  autoStart?: boolean;
+}
 
 export interface UseVoiceCommandReturn {
   isListening: boolean;
+  listenPhase: VoiceListenPhase;
   modelStatus: ModelStatus;
   modelProgress: number;
   engine: VoiceEngine;
@@ -39,8 +50,11 @@ export interface UseVoiceCommandReturn {
 
 const whisperSvc = new SpeechRecognitionService();
 
-export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVoiceCommandReturn {
+export function useVoiceCommand(options: UseVoiceCommandOptions = {}): UseVoiceCommandReturn {
+  const { onCommand, autoStart = false } = options;
+
   const [isListening, setIsListening] = useState(false);
+  const [armedUntil, setArmedUntil] = useState(0);
   const [modelStatus, setModelStatus] = useState<ModelStatus>(USE_WEB_SPEECH ? 'ready' : 'idle');
   const [modelProgress, setModelProgress] = useState(USE_WEB_SPEECH ? 100 : 0);
   const [engine, setEngine] = useState<VoiceEngine>(USE_WEB_SPEECH ? 'web' : null);
@@ -50,6 +64,9 @@ export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVo
 
   const streamRef = useRef<MediaStream | null>(null);
   const activeRef = useRef(false);
+  const userStoppedRef = useRef(false);
+  const armedUntilRef = useRef(0);
+  const pendingStartRef = useRef(false);
   const chunkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mimeRef = useRef(MIME_TYPE);
   const modelReadyRef = useRef(USE_WEB_SPEECH);
@@ -57,21 +74,56 @@ export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVo
   const onCommandRef = useRef(onCommand);
   onCommandRef.current = onCommand;
 
-  const handleTranscript = useCallback((text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed || !activeRef.current) return;
+  armedUntilRef.current = armedUntil;
 
-    setLastTranscript(trimmed);
-    const commandId = parseVoiceCommand(trimmed);
-    setLastCommandId(commandId);
+  const listenPhase: VoiceListenPhase = !isListening
+    ? 'off'
+    : Date.now() < armedUntil
+      ? 'armed'
+      : 'wake';
 
-    if (commandId) {
-      setLastFeedback(getCommandLabel(commandId));
-      onCommandRef.current?.(commandId);
-    } else {
-      setLastFeedback('No reconocí un comando. Prueba: "estado" o "confirmar alerta".');
-    }
+  const armListening = useCallback(() => {
+    const until = Date.now() + COMMAND_ARMED_MS;
+    armedUntilRef.current = until;
+    setArmedUntil(until);
+    setLastFeedback('Te escucho. Di tu comando.');
   }, []);
+
+  const handleTranscript = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || !activeRef.current) return;
+
+      setLastTranscript(trimmed);
+      const isArmed = Date.now() < armedUntilRef.current;
+      const result = processCopilotUtterance(trimmed, isArmed);
+
+      if (result.type === 'wake_only') {
+        armListening();
+        setLastCommandId(null);
+        return;
+      }
+
+      if (result.type === 'command') {
+        setLastCommandId(result.commandId);
+        setLastFeedback(getCommandLabel(result.commandId));
+        armedUntilRef.current = 0;
+        setArmedUntil(0);
+        onCommandRef.current?.(result.commandId);
+        if (activeRef.current) {
+          setLastFeedback(`Di «${WAKE_WORD_LABEL}» y luego tu comando`);
+        }
+        return;
+      }
+
+      if (isArmed) {
+        setLastFeedback('No reconocí el comando. Prueba: «estado» o «confirmar alerta».');
+      }
+    },
+    [armListening],
+  );
+
+  const startInternalRef = useRef<() => Promise<void>>(async () => {});
 
   const bindWhisperCallbacks = useCallback(() => {
     whisperSvc.onStatusChange = (status) => {
@@ -81,6 +133,10 @@ export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVo
       modelReadyRef.current = USE_WEB_SPEECH || status === 'ready';
       if (status === 'ready' && !USE_WEB_SPEECH) {
         setEngine('whisper');
+        if (pendingStartRef.current) {
+          pendingStartRef.current = false;
+          void startInternalRef.current();
+        }
       }
     };
     whisperSvc.onProgress = (p: ModelProgress) => {
@@ -94,12 +150,6 @@ export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVo
     bindWhisperCallbacks();
     whisperSvc.initialize();
   }, [bindWhisperCallbacks]);
-
-  useEffect(() => {
-    if (!USE_WEB_SPEECH) {
-      loadWhisper();
-    }
-  }, [loadWhisper]);
 
   const recordChunk = useCallback(() => {
     if (!activeRef.current || !streamRef.current) return;
@@ -121,7 +171,7 @@ export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVo
           const text = await whisperSvc.transcribe(audio, samplingRate);
           if (text) handleTranscript(text);
         } catch {
-          // reintenta en el siguiente chunk
+          // siguiente chunk
         }
       }
       if (activeRef.current) {
@@ -137,6 +187,7 @@ export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVo
 
   const startWhisper = useCallback(async () => {
     if (!modelReadyRef.current) {
+      pendingStartRef.current = true;
       setLastFeedback('Cargando reconocimiento de voz…');
       loadWhisper();
       return;
@@ -149,15 +200,35 @@ export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVo
     recordChunk();
   }, [loadWhisper, recordChunk]);
 
-  const start = useCallback(async () => {
+  const releaseMic = useCallback(() => {
+    activeRef.current = false;
+    webSpeechRef.current?.stop();
+    webSpeechRef.current = null;
+
+    if (chunkTimerRef.current) {
+      clearTimeout(chunkTimerRef.current);
+      chunkTimerRef.current = null;
+    }
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+
+    setIsListening(false);
+    armedUntilRef.current = 0;
+    setArmedUntil(0);
+    if (USE_WEB_SPEECH) setEngine('web');
+  }, []);
+
+  const startInternal = useCallback(async () => {
     if (activeRef.current) return;
 
     try {
       activeRef.current = true;
       setIsListening(true);
-      setLastFeedback('Escuchando…');
+      setLastFeedback(`Di «${WAKE_WORD_LABEL}» y tu comando`);
       setLastTranscript('');
       setLastCommandId(null);
+      armedUntilRef.current = 0;
+      setArmedUntil(0);
 
       if (USE_WEB_SPEECH) {
         const web = new WebSpeechRecognizer();
@@ -179,26 +250,20 @@ export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVo
     }
   }, [handleTranscript, startWhisper]);
 
+  startInternalRef.current = startInternal;
+
+  const start = useCallback(async () => {
+    userStoppedRef.current = false;
+    await startInternal();
+  }, [startInternal]);
+
   const stop = useCallback(() => {
-    activeRef.current = false;
-    webSpeechRef.current?.stop();
-    webSpeechRef.current = null;
-
-    if (chunkTimerRef.current) {
-      clearTimeout(chunkTimerRef.current);
-      chunkTimerRef.current = null;
-    }
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-
-    setIsListening(false);
+    userStoppedRef.current = true;
+    releaseMic();
     setLastTranscript('');
     setLastCommandId(null);
     setLastFeedback('');
-    if (USE_WEB_SPEECH) {
-      setEngine('web');
-    }
-  }, []);
+  }, [releaseMic]);
 
   const retryModel = useCallback(() => {
     whisperSvc.destroy();
@@ -206,10 +271,20 @@ export function useVoiceCommand(onCommand?: (id: VoiceCommandId) => void): UseVo
     loadWhisper();
   }, [loadWhisper]);
 
-  useEffect(() => () => { stop(); }, [stop]);
+  useEffect(() => {
+    if (!autoStart) return;
+    userStoppedRef.current = false;
+    void startInternal();
+    return () => releaseMic();
+  }, [autoStart, startInternal, releaseMic]);
+
+  useEffect(() => {
+    if (!USE_WEB_SPEECH) loadWhisper();
+  }, [loadWhisper]);
 
   return {
     isListening,
+    listenPhase,
     modelStatus,
     modelProgress,
     engine,

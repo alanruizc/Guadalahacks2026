@@ -1,4 +1,6 @@
-/** Comandos con sentido para un copiloto de seguridad (no controlan el vehículo). */
+import type { CannedGestureName } from '../gestures/extractGestures';
+import { formatGestureLabel } from '../gestures/gestureLabels';
+
 export type VoiceCommandId =
   | 'toggle_voice'
   | 'ack_alert'
@@ -12,12 +14,9 @@ export type VoiceCommandId =
 
 export interface VoiceCommandDef {
   id: VoiceCommandId;
-  /** Texto corto para la UI */
   label: string;
-  /** Frases que el usuario puede decir */
   phrases: string[];
-  /** Gesto MediaPipe asociado, si aplica */
-  gestureName?: string;
+  gestureName?: CannedGestureName;
 }
 
 export const VOICE_COMMANDS: VoiceCommandDef[] = [
@@ -87,14 +86,37 @@ export const VOICE_COMMANDS: VoiceCommandDef[] = [
   },
 ];
 
-export const GESTURE_COMMAND_MAPPINGS = VOICE_COMMANDS.filter(
-  (c): c is VoiceCommandDef & { gestureName: string } => Boolean(c.gestureName),
-).map((c) => ({
-  commandId: c.id,
-  voicePhrase: c.phrases[0],
-  gestureName: c.gestureName,
+export interface GestureVoiceMapping {
+  commandId: VoiceCommandId;
+  gestureName: CannedGestureName;
+  gestureLabel: string;
+  voicePhrase: string;
+  label: string;
+}
+
+export const GESTURE_VOICE_MAPPINGS: GestureVoiceMapping[] = VOICE_COMMANDS.filter(
+  (cmd): cmd is VoiceCommandDef & { gestureName: CannedGestureName } =>
+    Boolean(cmd.gestureName),
+).map((cmd) => ({
+  commandId: cmd.id,
+  gestureName: cmd.gestureName,
+  gestureLabel: formatGestureLabel(cmd.gestureName),
+  voicePhrase: cmd.phrases[0],
+  label: cmd.label,
 }));
+
+export const VOICE_ONLY_COMMANDS = VOICE_COMMANDS.filter((cmd) => !cmd.gestureName);
 
 export function getCommandLabel(id: VoiceCommandId): string {
   return VOICE_COMMANDS.find((c) => c.id === id)?.label ?? id;
+}
+
+export function getCommandByGesture(gestureName: string): GestureVoiceMapping | null {
+  return GESTURE_VOICE_MAPPINGS.find((m) => m.gestureName === gestureName) ?? null;
+}
+
+export function formatGestureHint(gestureName: string): string | null {
+  const m = getCommandByGesture(gestureName);
+  if (!m) return null;
+  return `${m.gestureLabel} → ${m.label}`;
 }

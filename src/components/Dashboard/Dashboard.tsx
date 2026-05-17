@@ -1,19 +1,24 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import styles from './Dashboard.module.css';
 import { Speedometer } from './metrics/Speedometer';
 import { AlertIndicator } from './metrics/AlertIndicator';
 import { StatusBar } from './metrics/StatusBar';
 import { CameraFeed } from '../Camera/CameraFeed';
 import { VoiceCommandHelp } from './VoiceCommandHelp';
+import { VoiceStatusStrip } from './VoiceStatusStrip';
+import { ActionFeedback } from './ActionFeedback';
 import { useVoiceCommand } from '../../hooks/useVoiceCommand';
 import { useVehicleSpeed } from '../../hooks/useVehicleSpeed';
 import { useAlertSound, useAlertSoundUnlock } from '../../hooks/useAlertSound';
 import { alertSoundService } from '../../services/alertSound/alertSoundService';
 import { resolveGestureCommand } from '../../services/gestures/gestureCommands';
-import type { VoiceCommandId } from '../../services/gestures/gestureCommands';
+import { getActionMessage } from '../../services/gestures/commandFeedback';
+import type { VoiceCommandId } from '../../services/voice/voiceCommands';
 import type { DetectedGesture } from '../../services/gestures/extractGestures';
 
 const EMERGENCY_CONTACT = localStorage.getItem('emergency_contact') ?? '+521234567890';
+const CALL_DELAY_MS = 400;
+const FEEDBACK_MS = 4500;
 
 // ─── WhatsApp alert config ────────────────────────────────────────────────────
 const FATIGUE_ALERT_THRESHOLD = 70;
@@ -33,15 +38,12 @@ const initialState: DriverState = {
   isMuted: false,
 };
 
-function speak(text: string): void {
-  window.speechSynthesis.cancel();
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = 'es-MX';
-  window.speechSynthesis.speak(utter);
-}
-
 export function Dashboard() {
   const [state, setState] = useState<DriverState>(initialState);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const {
     speed: gpsSpeed,
     status: gpsStatus,
@@ -51,6 +53,8 @@ export function Dashboard() {
   } = useVehicleSpeed();
 
   const voiceRef = useRef({ isListening: false, start: async () => {}, stop: () => {} });
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   // ─── WhatsApp refs ──────────────────────────────────────────────────────────
   const lastAlertSentRef = useRef<number>(0);
@@ -59,20 +63,32 @@ export function Dashboard() {
   useAlertSoundUnlock();
   useAlertSound(state.isAlertActive, state.isMuted);
 
+  const showFeedback = useCallback((message: string) => {
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    setFeedback(message);
+    feedbackTimerRef.current = setTimeout(() => {
+      setFeedback(null);
+      feedbackTimerRef.current = null;
+    }, FEEDBACK_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    };
+  }, []);
+
   // ─── WhatsApp send ──────────────────────────────────────────────────────────
   const sendWhatsAppAlert = useCallback(async (nivelFatiga: number) => {
     const ahora = Date.now();
     if (ahora - lastAlertSentRef.current < ALERT_COOLDOWN_MS) return;
-
     lastAlertSentRef.current = ahora;
-
     try {
       const res = await fetch('http://localhost:3001/send-alert', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nivelFatiga }),
       });
-
       if (!res.ok) {
         console.error('[WhatsApp] Error en servidor:', await res.text());
       } else {
@@ -84,110 +100,75 @@ export function Dashboard() {
     }
   }, []);
 
-  // ─── Commands ───────────────────────────────────────────────────────────────
+  const buildActionContext = useCallback(
+    () => ({
+      fatigueLevel: stateRef.current.fatigueLevel,
+      gpsSpeed,
+      isGpsTracking,
+      gpsStatusLabel,
+      isMuted: stateRef.current.isMuted,
+    }),
+    [gpsSpeed, gpsStatusLabel, isGpsTracking],
+  );
+
   const executeCommand = useCallback(
     (commandId: VoiceCommandId) => {
+      const ctx = buildActionContext();
+
       if (commandId === 'toggle_voice') {
         const v = voiceRef.current;
-        if (v.isListening) {
-          v.stop();
-          speak('Micrófono apagado');
-        } else {
-          void v.start();
-          speak('Escuchando comandos');
-        }
+        if (v.isListening) { v.stop(); showFeedback('Micrófono pausado'); }
+        else { void v.start(); showFeedback('Micrófono activo'); }
         return;
       }
 
-      setState((prev) => {
-        switch (commandId) {
-          case 'ack_alert':
-            alertSoundService.stop();
-            alertActiveRef.current = false;
-            speak('Alerta confirmada');
-            return { ...prev, isAlertActive: false, fatigueLevel: 0 };
-
-          case 'calibrate':
-            alertSoundService.stop();
-            alertActiveRef.current = false;
-            speak('Fatiga reiniciada a cero');
-            return { ...prev, fatigueLevel: 0, isAlertActive: false };
-
-          case 'rest_mode':
-            speak('Modo descanso. Detente en un lugar seguro cuando puedas.');
-            return { ...prev, isAlertActive: true };
-
-          case 'mute_alerts': {
-            const nextMuted = !prev.isMuted;
-            if (nextMuted) alertSoundService.stop();
-            speak(nextMuted ? 'Alertas silenciadas' : 'Alertas activadas');
-            return { ...prev, isMuted: nextMuted };
-          }
-
-          default:
-            return prev;
-        }
-      });
-
-      if (commandId === 'report_status') {
-        setState((prev) => {
-          const level = prev.fatigueLevel;
-          const speedPart = isGpsTracking ? ` Vas a ${gpsSpeed} kilómetros por hora.` : '';
-          const msg =
-            level > 60
-              ? `Nivel de fatiga crítico: ${level} por ciento. Detente a descansar.${speedPart}`
-              : level > 30
-                ? `Fatiga leve: ${level} por ciento. Mantente alerta.${speedPart}`
-                : `Estado normal: ${level} por ciento de fatiga.${speedPart}`;
-          speak(msg);
-          return prev;
-        });
+      if (commandId === 'mute_alerts') {
+        const nextMuted = !stateRef.current.isMuted;
+        if (nextMuted) alertSoundService.stop();
+        setState((prev) => ({ ...prev, isMuted: nextMuted }));
+        showFeedback(getActionMessage('mute_alerts', { ...ctx, isMuted: !nextMuted }));
+        return;
       }
 
-      if (commandId === 'report_speed') {
-        if (isGpsTracking) {
-          speak(`Llevas ${gpsSpeed} kilómetros por hora`);
-        } else {
-          speak(
-            gpsStatus === 'denied'
-              ? 'No tengo ubicación. Activa el permiso GPS para leer tu velocidad.'
-              : 'Esperando señal GPS. Intenta de nuevo en un momento.',
-          );
-        }
+      if (commandId === 'ack_alert' || commandId === 'calibrate') {
+        alertSoundService.stop();
+        alertActiveRef.current = false;
+        setState((prev) => ({ ...prev, isAlertActive: false, fatigueLevel: 0 }));
+        showFeedback(getActionMessage(commandId, { ...ctx, fatigueLevel: 0 }));
+        return;
+      }
+
+      if (commandId === 'rest_mode') {
+        setState((prev) => ({ ...prev, isAlertActive: true }));
+        showFeedback(getActionMessage('rest_mode', ctx));
+        return;
+      }
+
+      if (commandId === 'report_status' || commandId === 'report_speed') {
+        showFeedback(getActionMessage(commandId, ctx));
+        return;
       }
 
       if (commandId === 'call_emergency') {
-        speak('Llamando a emergencias');
-        setTimeout(() => { window.location.href = 'tel:911'; }, 1200);
+        showFeedback(getActionMessage('call_emergency', ctx));
+        setTimeout(() => { window.location.href = 'tel:911'; }, CALL_DELAY_MS);
+        return;
       }
 
       if (commandId === 'call_contact') {
-        speak('Llamando a tu contacto');
-        setTimeout(() => { window.location.href = `tel:${EMERGENCY_CONTACT}`; }, 1200);
+        showFeedback(getActionMessage('call_contact', ctx));
+        setTimeout(() => { window.location.href = `tel:${EMERGENCY_CONTACT}`; }, CALL_DELAY_MS);
       }
     },
-    [gpsSpeed, gpsStatus, isGpsTracking],
+    [buildActionContext, showFeedback],
   );
 
-  const voice = useVoiceCommand(executeCommand);
-  voiceRef.current = {
-    isListening: voice.isListening,
-    start: voice.start,
-    stop: voice.stop,
-  };
+  const voice = useVoiceCommand({ onCommand: executeCommand, autoStart: true });
 
-  // ─── Handlers ────────────────────────────────────────────────────────────────
-  const handleVoiceToggle = () => {
-    alertSoundService.unlock();
-    if (voice.modelStatus === 'error') { voice.retryModel(); return; }
-    if (voice.isListening) { voice.stop(); } else { void voice.start(); }
-  };
+  voiceRef.current = { isListening: voice.isListening, start: voice.start, stop: voice.stop };
 
-  const handleAlertAck = () => {
-    alertSoundService.stop();
-    alertActiveRef.current = false;
-    setState((prev) => ({ ...prev, isAlertActive: false, fatigueLevel: 0 }));
-  };
+  const handleResetFatigue = () => executeCommand('calibrate');
+  const handleAlertAck = () => executeCommand('ack_alert');
 
   const handleCameraReady = useCallback(() => {
     setState((prev) => ({ ...prev, isCameraActive: true }));
@@ -195,9 +176,7 @@ export function Dashboard() {
 
   const handleFatigaChange = useCallback((nuevaFatiga: number) => {
     setState((prev) => {
-      if (prev.fatigueLevel === nuevaFatiga && (nuevaFatiga <= 55 || prev.isAlertActive)) {
-        return prev;
-      }
+      if (prev.fatigueLevel === nuevaFatiga && (nuevaFatiga <= 55 || prev.isAlertActive)) return prev;
       return {
         ...prev,
         fatigueLevel: nuevaFatiga,
@@ -224,35 +203,35 @@ export function Dashboard() {
     [executeCommand],
   );
 
-  // ─── UI helpers ──────────────────────────────────────────────────────────────
   const getAlertStatusText = () => {
-    if (state.fatigueLevel > 60) return 'DISTRAIDO / SOMNOLENCIA';
-    if (state.fatigueLevel > 30) return 'FATIGA LEVE';
-    return 'NORMAL';
+    if (state.fatigueLevel > 60) return 'Somnolencia';
+    if (state.fatigueLevel > 30) return 'Fatiga leve';
+    return 'Normal';
   };
 
-  const getVoiceButtonLabel = () => {
-    if (voice.modelStatus === 'loading') {
-      return `Cargando modelo${voice.modelProgress > 0 ? ` ${voice.modelProgress}%` : '...'}`;
-    }
-    if (voice.modelStatus === 'error') return 'Error — toca para reintentar';
-    if (voice.isListening) return 'Escuchando...';
-    return 'Comando de Voz';
-  };
+  const alertLevel = state.fatigueLevel > 60 ? 'critical' : state.fatigueLevel > 30 ? 'warning' : 'ok';
 
-  const feedbackText =
+  const voiceFeedback =
     voice.lastFeedback ||
-    (voice.lastTranscript && !voice.lastCommandId ? voice.lastTranscript : '');
+    (voice.lastCommandId ? '' : voice.lastTranscript ? voice.lastTranscript : '');
 
   return (
     <div className={styles.dashboard}>
       <header className={styles.header}>
-        <h1 className={styles.title}>Drive Copilot</h1>
-        <StatusBar isMonitoring={state.isCameraActive} isVoiceActive={voice.isListening} />
+        <div className={styles.headerBrand}>
+          <h1 className={styles.title}>Drive Copilot</h1>
+          <p className={styles.subtitle}>Asistente de seguridad al volante</p>
+        </div>
+        <StatusBar
+          isMonitoring={state.isCameraActive}
+          listenPhase={voice.listenPhase}
+          gpsStatus={gpsStatus}
+          isModelLoading={voice.modelStatus === 'loading'}
+        />
       </header>
 
       <main className={styles.main}>
-        <section className={styles.cameraSection}>
+        <section className={styles.cameraColumn}>
           <CameraFeed
             onReady={handleCameraReady}
             onFatigaChange={handleFatigaChange}
@@ -260,74 +239,54 @@ export function Dashboard() {
           />
         </section>
 
-        <div className={styles.content}>
-          <section className={styles.speedometerSection}>
+        <aside className={styles.sidePanel}>
+          <ActionFeedback message={feedback} />
+
+          <div className={styles.statsGrid}>
             <Speedometer
               speed={gpsSpeed}
               gpsStatus={gpsStatus}
               gpsStatusLabel={gpsStatusLabel}
               onRetryGps={retryGps}
             />
-          </section>
 
-          <section className={styles.metricsSection}>
-            <div className={styles.metricCard}>
-              <h3 className={styles.metricTitle}>Nivel de Fatiga</h3>
-              <div className={styles.fatigueBar}>
-                <div className={styles.fatigueFill} style={{ width: `${state.fatigueLevel}%` }} />
+            <article className={`${styles.metricCard} ${styles.fatigueCard}`}>
+              <div className={styles.metricCardHeader}>
+                <h3 className={styles.metricTitle}>Fatiga</h3>
+                <button type="button" className={styles.resetBtn} onClick={handleResetFatigue} title="Reiniciar nivel de fatiga">
+                  Reiniciar
+                </button>
               </div>
-              <span className={styles.metricValue}>{state.fatigueLevel}%</span>
-            </div>
+              <div className={styles.fatigueRow}>
+                <span className={styles.metricValue}>{state.fatigueLevel}%</span>
+                <div className={styles.fatigueBar}>
+                  <div className={styles.fatigueFill} style={{ width: `${state.fatigueLevel}%` }} data-level={alertLevel} />
+                </div>
+              </div>
+            </article>
 
-            <div className={styles.metricCard}>
-              <h3 className={styles.metricTitle}>Estado de Alerta</h3>
-              <div
-                className={styles.alertStatus}
-                data-level={
-                  state.fatigueLevel > 60 ? 'critical' : state.fatigueLevel > 30 ? 'warning' : 'ok'
-                }
-              >
-                {getAlertStatusText()}
-              </div>
+            <article className={`${styles.metricCard} ${styles.alertCard}`}>
+              <h3 className={styles.metricTitle}>Alerta</h3>
+              <p className={styles.alertStatus} data-level={alertLevel}>{getAlertStatusText()}</p>
               <AlertIndicator isActive={state.isAlertActive} onAck={handleAlertAck} />
-            </div>
-          </section>
+            </article>
+          </div>
 
-          <VoiceCommandHelp engine={voice.engine} />
+          <VoiceStatusStrip
+            listenPhase={voice.listenPhase}
+            modelStatus={voice.modelStatus}
+            modelProgress={voice.modelProgress}
+            feedback={voiceFeedback}
+            onResume={voice.listenPhase === 'off' ? () => void voice.start() : undefined}
+            onRetry={voice.modelStatus === 'error' ? voice.retryModel : undefined}
+          />
 
-          {feedbackText && (
-            <section className={styles.messageSection}>
-              <div
-                className={styles.messageCard}
-                data-kind={voice.lastCommandId ? 'ok' : voice.lastTranscript ? 'unknown' : 'info'}
-              >
-                <span className={styles.messageIcon}>
-                  {voice.lastCommandId ? '✓' : voice.lastTranscript ? '?' : '🎙'}
-                </span>
-                <p className={styles.messageText}>{feedbackText}</p>
-              </div>
-            </section>
-          )}
-
-          <section className={styles.controlsSection}>
-            <button
-              type="button"
-              className={`${styles.voiceButton} ${voice.isListening ? styles.listening : ''} ${state.isMuted ? styles.muted : ''}`}
-              onClick={handleVoiceToggle}
-              disabled={voice.modelStatus === 'loading' || voice.modelStatus === 'idle'}
-            >
-              <span className={styles.voiceIcon}>
-                {voice.modelStatus === 'loading' ? '⏳' : voice.isListening ? '●' : '○'}
-              </span>
-              {getVoiceButtonLabel()}
-            </button>
-          </section>
-        </div>
+          <details className={styles.helpDetails} open={helpOpen} onToggle={(e) => setHelpOpen(e.currentTarget.open)}>
+            <summary className={styles.helpSummary}>Comandos de voz y gestos</summary>
+            <VoiceCommandHelp engine={voice.engine} />
+          </details>
+        </aside>
       </main>
-
-      <footer className={styles.footer}>
-        <span className={styles.statusText} />
-      </footer>
     </div>
   );
 }

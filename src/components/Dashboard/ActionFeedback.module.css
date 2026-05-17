@@ -1,0 +1,22 @@
+.banner {
+  padding: 0.55rem 0.85rem;
+  border-radius: 10px;
+  background: rgba(0, 212, 255, 0.12);
+  border: 1px solid rgba(0, 212, 255, 0.25);
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #e8f8ff;
+  line-height: 1.35;
+  animation: fadeIn 0.25s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
