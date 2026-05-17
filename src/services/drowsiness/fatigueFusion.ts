@@ -7,9 +7,9 @@ import {
   isYawning,
 } from './blendshapes';
 
-/** Frames consecutivos con ojos cerrados para señal fuerte (~0,4 s a 30 fps). */
+// Frames consecutivos con ojos cerrados para interpretar como señal fuerte (~0,4 s/30fps)
 const CLOSED_FRAMES_STRONG = 12;
-/** Frames con ojos cerrados para señal leve. */
+// Frames con ojos cerrados para interpretar como señal leve (~0,13 s/30fps)
 const CLOSED_FRAMES_MILD = 4;
 
 export interface FatigueFusionState {
@@ -28,9 +28,6 @@ export interface FatigueFusionResult {
   level: number;
 }
 
-/**
- * Combina blendshapes (ojos, bostezo) con el modelo TF y reduce falsos positivos.
- */
 export function fuseFatigueSignals({
   state,
   blendshapes,
