@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FaceLandmarker, NormalizedLandmark } from '@mediapipe/tasks-vision';
+import { DrawingUtils, type FaceLandmarker, type NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { initializeFaceLandmarker, detectFaces } from '../../services/faceLandmarker';
+import { drawFaceMesh } from './drawFaceMesh';
 import { useFaceDetection } from '../../hooks/useFaceDetection';
 import {
   computeFaceZoomTarget,
@@ -63,6 +64,7 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
   const lastFrameTimeRef = useRef(0);
   const lastDetectionTimeRef = useRef(-1);
   const zoomStateRef = useRef<FaceZoomState>({ scale: 1, originX: 50, originY: 50 });
+  const drawingUtilsRef = useRef<DrawingUtils | null>(null);
 
   onReadyRef.current = onReady;
   onFatigaChangeRef.current = onFatigaChange;
@@ -111,63 +113,14 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
     }
 
     ctx.clearRect(0, 0, frameWidth, frameHeight);
-    ctx.fillStyle = '#00d4ff';
-    ctx.strokeStyle = '#00d4ff';
-    ctx.lineWidth = 1.5;
 
-    const faceOutline = [
-      10, 338, 297, 332, 331, 297, 284, 251, 389, 356, 454, 323, 361, 288,
-      397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 169, 170, 140,
-      171, 175, 396, 369, 395, 394, 364, 365, 397, 288, 361, 323, 454, 356,
-      389, 251, 397, 365, 284, 251, 306, 241, 240, 242, 243, 44, 185, 122,
-      188, 227, 225, 224, 223, 222, 221, 190, 189, 194, 207, 214, 211, 210,
-      211, 43, 230, 228, 229, 231, 232, 135, 169, 170, 140, 171, 175, 396,
-      369, 395, 394, 364, 365, 397, 288, 361, 323, 454, 356, 389, 251, 397,
-      365, 284, 251, 306, 241, 240, 242, 243, 44, 185, 122, 188, 227, 225,
-      224, 223, 222, 221, 190, 189, 194, 207, 214, 211, 210, 211,
-    ];
-
-    for (let i = 0; i < faceOutline.length - 1; i++) {
-      const p1 = landmarks[faceOutline[i]];
-      const p2 = landmarks[faceOutline[i + 1]];
-      if (p1 && p2) {
-        ctx.beginPath();
-        ctx.moveTo(p1.x * frameWidth, p1.y * frameHeight);
-        ctx.lineTo(p2.x * frameWidth, p2.y * frameHeight);
-        ctx.stroke();
-      }
+    if (!drawingUtilsRef.current) {
+      drawingUtilsRef.current = new DrawingUtils(ctx);
+    } else {
+      drawingUtilsRef.current = new DrawingUtils(ctx);
     }
 
-    const leftEye = [33, 246, 161, 160, 159, 158, 157, 173, 155, 154, 153, 145, 144, 163, 7, 33];
-    const rightEye = [263, 466, 397, 288, 361, 323, 454, 356, 389, 251, 397, 365, 284, 251, 397, 263];
-
-    for (let i = 0; i < leftEye.length - 1; i++) {
-      const p1 = landmarks[leftEye[i]];
-      const p2 = landmarks[leftEye[i + 1]];
-      if (p1 && p2) {
-        ctx.beginPath();
-        ctx.moveTo(p1.x * frameWidth, p1.y * frameHeight);
-        ctx.lineTo(p2.x * frameWidth, p2.y * frameHeight);
-        ctx.stroke();
-      }
-    }
-
-    for (let i = 0; i < rightEye.length - 1; i++) {
-      const p1 = landmarks[rightEye[i]];
-      const p2 = landmarks[rightEye[i + 1]];
-      if (p1 && p2) {
-        ctx.beginPath();
-        ctx.moveTo(p1.x * frameWidth, p1.y * frameHeight);
-        ctx.lineTo(p2.x * frameWidth, p2.y * frameHeight);
-        ctx.stroke();
-      }
-    }
-
-    for (const point of landmarks) {
-      ctx.beginPath();
-      ctx.arc(point.x * frameWidth, point.y * frameHeight, 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    drawFaceMesh(drawingUtilsRef.current, landmarks);
   };
 
   useEffect(() => {
@@ -248,8 +201,8 @@ export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
             drawLandmarks(landmarks, frameWidth, frameHeight);
             applyFaceZoom(landmarks);
 
-            // CORRECCIÓN CLAVE: Inyección lineal del fotograma procesado hacia TensorFlow sin colisiones de hilos
-            procesarFotogramaSomnolencia(activeVideo, landmarks);
+            const blendshapes = result.faceBlendshapes?.[0];
+            procesarFotogramaSomnolencia(activeVideo, landmarks, blendshapes);
           } else {
             const canvas = canvasRef.current;
             const ctx = canvas?.getContext('2d');

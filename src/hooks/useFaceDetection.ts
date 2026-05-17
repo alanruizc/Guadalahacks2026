@@ -1,6 +1,14 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import * as tf from '@tensorflow/tfjs';
 import { initializeFaceLandmarker } from '../services/faceLandmarker';
+import type { BlendshapeCategories } from '../services/drowsiness/blendshapes';
+import { parseBlendshapeScores } from '../services/drowsiness/blendshapes';
+import {
+  createFatigueFusionState,
+  fuseFatigueSignals,
+  type FatigueFusionState,
+} from '../services/drowsiness/fatigueFusion';
+import { eyeCropToPixels, getEyeRegionBounds } from '../services/drowsiness/eyeCrop';
 
 interface FaceLandmarks {
   x: number;
@@ -9,16 +17,15 @@ interface FaceLandmarks {
   visibility?: number;
 }
 
-export interface FaceDetectionResult {
-  landmarks: FaceLandmarks[] | null;
-  timestamp: number;
-}
-
 interface UseFaceDetectionReturn {
   isLoading: boolean;
   error: string | null;
   nivelFatiga: number;
-  procesarFotogramaSomnolencia: (video: HTMLVideoElement, landmarks: FaceLandmarks[]) => void;
+  procesarFotogramaSomnolencia: (
+    video: HTMLVideoElement,
+    landmarks: FaceLandmarks[],
+    blendshapes?: BlendshapeCategories,
+  ) => void;
   resetFatiga: () => void;
 }
 
@@ -29,16 +36,22 @@ export function useFaceDetection(): UseFaceDetectionReturn {
 
   const modelRef = useRef<tf.LayersModel | null>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const porcentajeAcumuladoRef = useRef<number>(0);
+  const fusionStateRef = useRef<FatigueFusionState>(createFatigueFusionState());
   const nivelFatigaRef = useRef<number>(0);
+
+  const applyFatigueLevel = useCallback((level: number) => {
+    if (level !== nivelFatigaRef.current) {
+      nivelFatigaRef.current = level;
+      setNivelFatiga(level);
+    }
+  }, []);
 
   const initialize = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
       await initializeFaceLandmarker();
-      
-      // Intentar cargar las capas del modelo entrenado
+
       const loadedModel = await tf.loadLayersModel('/model/model.json');
       modelRef.current = loadedModel;
 
@@ -55,80 +68,62 @@ export function useFaceDetection(): UseFaceDetectionReturn {
     }
   }, []);
 
-  const procesarFotogramaSomnolencia = useCallback((video: HTMLVideoElement, landmarks: FaceLandmarks[]) => {
-    if (!modelRef.current || !offscreenCanvasRef.current || !landmarks || landmarks.length === 0) return;
+  const runTensorFlowEyes = useCallback(
+    (video: HTMLVideoElement, landmarks: FaceLandmarks[]): number | null => {
+      if (!modelRef.current || !offscreenCanvasRef.current) return null;
 
-    const ctx = offscreenCanvasRef.current.getContext('2d');
-    if (!ctx) return;
+      const bounds = getEyeRegionBounds(landmarks);
+      if (!bounds) return null;
 
-    // Índices periféricos clave de ambos ojos en MediaPipe FaceMesh
-    // POR ESTO (Puntos extremos del óvalo facial completo):
-    const indicesOjos = [10, 152, 234, 454, 139, 368, 58, 288];
-    const puntosOjos = indicesOjos.map(idx => landmarks[idx]).filter(Boolean);
+      const videoWidth = video.videoWidth || 640;
+      const videoHeight = video.videoHeight || 480;
+      const { x, y, width, height } = eyeCropToPixels(bounds, videoWidth, videoHeight);
 
-    if (puntosOjos.length === 0) return;
+      if (width < 10 || height < 10) return null;
 
-    let minX = 1, maxX = 0, minY = 1, maxY = 0;
-    puntosOjos.forEach(p => {
-      if (p.x < minX) minX = p.x;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.y > maxY) maxY = p.y;
-    });
+      const ctx = offscreenCanvasRef.current.getContext('2d');
+      if (!ctx) return null;
 
-    const videoWidth = video.videoWidth || 640;
-    const videoHeight = video.videoHeight || 480;
-    
-    let x = minX * videoWidth;
-    let y = minY * videoHeight;
-    let width = (maxX - minX) * videoWidth;
-    let height = (maxY - minY) * videoHeight;
+      ctx.clearRect(0, 0, 224, 224);
+      ctx.drawImage(video, x, y, width, height, 0, 0, 224, 224);
 
-    const paddingX = width * 0.45;
-    const paddingY = height * 0.45;
+      let probDormido = 0;
+      tf.tidy(() => {
+        const imgTensor = tf.browser.fromPixels(offscreenCanvasRef.current!);
+        const normalized = imgTensor.toFloat().div(tf.scalar(255.0));
+        const batched = normalized.expandDims(0);
+        const prediccion = modelRef.current!.predict(batched) as tf.Tensor;
+        probDormido = prediccion.dataSync()[1];
+      });
 
-    x = Math.max(0, x - paddingX);
-    y = Math.max(0, y - paddingY);
-    width = Math.min(videoWidth - x, width + (paddingX * 2));
-    height = Math.min(videoHeight - y, height + (paddingY * 2));
+      return probDormido;
+    },
+    [],
+  );
 
-    if (width < 10 || height < 10) return;
+  const procesarFotogramaSomnolencia = useCallback(
+    (video: HTMLVideoElement, landmarks: FaceLandmarks[], blendshapes?: BlendshapeCategories) => {
+      if (!landmarks.length) return;
 
-    ctx.clearRect(0, 0, 224, 224);
-    ctx.drawImage(video, x, y, width, height, 0, 0, 224, 224);
+      const parsedBlendshapes = parseBlendshapeScores(blendshapes);
+      const modelProbDormido = runTensorFlowEyes(video, landmarks);
 
-    tf.tidy(() => {
-      const imgTensor = tf.browser.fromPixels(offscreenCanvasRef.current!);
-      const floatTensor = imgTensor.toFloat();
-      const normalizedTensor = floatTensor.div(tf.scalar(255.0));
-      const batchedTensor = normalizedTensor.expandDims(0);
+      const { state, level } = fuseFatigueSignals({
+        state: fusionStateRef.current,
+        blendshapes: parsedBlendshapes,
+        modelProbDormido,
+      });
 
-      const prediccion = modelRef.current!.predict(batchedTensor) as tf.Tensor;
-      const datos = prediccion.dataSync();
-
-      const probDormido = datos[1];
-
-      if (probDormido > 0.65) {
-        porcentajeAcumuladoRef.current = Math.min(100, porcentajeAcumuladoRef.current + 8);
-      } else {
-        porcentajeAcumuladoRef.current = Math.max(0, porcentajeAcumuladoRef.current - 12);
-      }
-
-      const nuevoNivel = Math.round(porcentajeAcumuladoRef.current);
-      if (nuevoNivel !== nivelFatigaRef.current) {
-        nivelFatigaRef.current = nuevoNivel;
-        setNivelFatiga(nuevoNivel);
-      }
-    });
-  }, []);
+      fusionStateRef.current = state;
+      applyFatigueLevel(level);
+    },
+    [applyFatigueLevel, runTensorFlowEyes],
+  );
 
   const resetFatiga = useCallback(() => {
-    porcentajeAcumuladoRef.current = 0;
-    if (nivelFatigaRef.current !== 0) {
-      nivelFatigaRef.current = 0;
-      setNivelFatiga(0);
-    }
-  }, []);
+    fusionStateRef.current = createFatigueFusionState();
+    applyFatigueLevel(0);
+  }, [applyFatigueLevel]);
 
   useEffect(() => {
     initialize();
@@ -139,6 +134,6 @@ export function useFaceDetection(): UseFaceDetectionReturn {
     error,
     nivelFatiga,
     procesarFotogramaSomnolencia,
-    resetFatiga
+    resetFatiga,
   };
 }

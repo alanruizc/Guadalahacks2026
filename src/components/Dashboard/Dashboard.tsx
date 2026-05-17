@@ -57,7 +57,7 @@ export function Dashboard() {
 
   // Función auxiliar para determinar dinámicamente el texto del estado de alerta
   const getAlertStatusText = () => {
-    if (state.fatigueLevel > 60) return '🚨 CRÍTICO / SOMNOLENCIA';
+    if (state.fatigueLevel > 60) return '🚨 DISTRAIDO / SOMNOLENCIA';
     if (state.fatigueLevel > 30) return '⚠️ FATIGA LEVE';
     return '🟢 NORMAL';
   };

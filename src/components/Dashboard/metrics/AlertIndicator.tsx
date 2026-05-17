@@ -14,7 +14,7 @@ export function AlertIndicator({ isActive, onAck }: AlertIndicatorProps) {
           {isActive ? 'ALERTA ACTIVA' : 'NORMAL'}
         </span>
       </div>
-      {isActive}
+      {isActive && <button className={styles.ackButton} onClick={onAck}>OK</button>}
     </div>
   );
 }

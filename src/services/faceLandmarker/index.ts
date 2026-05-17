@@ -22,7 +22,7 @@ async function createLandmarker(delegate: 'GPU' | 'CPU'): Promise<FaceLandmarker
     },
     runningMode: 'VIDEO',
     numFaces: 1,
-    outputFaceBlendshapes: false,
+    outputFaceBlendshapes: true,
     outputFacialTransformationMatrixes: false,
   });
 }
