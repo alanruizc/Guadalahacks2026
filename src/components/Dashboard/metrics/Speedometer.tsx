@@ -28,74 +28,58 @@ export function Speedometer({
     (gpsStatus === 'denied' || gpsStatus === 'unavailable' || gpsStatus === 'error');
 
   return (
-    <div className={styles.container}>
-      <div className={styles.gauge}>
-        <svg viewBox="0 0 200 120" className={styles.arc}>
-          <circle
-            cx="100"
-            cy="100"
-            r="90"
-            fill="none"
-            stroke="rgba(255,255,255,0.1)"
-            strokeWidth="8"
-            strokeDasharray="424"
-            strokeDashoffset="106"
-            transform="rotate(135 100 100)"
-          />
-          <circle
-            cx="100"
-            cy="100"
-            r="90"
-            fill="none"
-            stroke={getSpeedColor()}
-            strokeWidth="8"
-            strokeDasharray="424"
-            strokeDashoffset={424 - (424 * percentage) / 100}
-            transform="rotate(135 100 100)"
-            className={styles.progress}
-          />
-        </svg>
-        <div className={styles.needleContainer}>
+    <article className={styles.card}>
+      <header className={styles.header}>
+        <h3 className={styles.title}>Velocidad</h3>
+        {gpsStatusLabel && (
+          <button
+            type="button"
+            className={styles.gpsPill}
+            data-status={gpsStatus}
+            onClick={canRetry ? onRetryGps : undefined}
+            disabled={!canRetry}
+            title={gpsStatusLabel}
+          >
+            <span className={styles.gpsDot} data-active={gpsStatus === 'tracking'} />
+            <span className={styles.gpsLabel}>{gpsStatusLabel}</span>
+          </button>
+        )}
+      </header>
+
+      <div className={styles.body}>
+        <div className={styles.readout}>
+          <span className={styles.speedValue} style={{ color: getSpeedColor() }}>
+            {speed}
+          </span>
+          <span className={styles.speedUnit}>km/h</span>
+        </div>
+
+        <div className={styles.miniGauge} aria-hidden>
+          <svg viewBox="0 0 100 60" className={styles.arc}>
+            <path
+              d="M 12 52 A 38 38 0 0 1 88 52"
+              fill="none"
+              stroke="rgba(255,255,255,0.12)"
+              strokeWidth="6"
+              strokeLinecap="round"
+            />
+            <path
+              d="M 12 52 A 38 38 0 0 1 88 52"
+              fill="none"
+              stroke={getSpeedColor()}
+              strokeWidth="6"
+              strokeLinecap="round"
+              strokeDasharray="120"
+              strokeDashoffset={120 - (120 * percentage) / 100}
+              className={styles.progress}
+            />
+          </svg>
           <div
             className={styles.needle}
             style={{ transform: `rotate(${rotation}deg)` }}
           />
         </div>
-        <div className={styles.center}>
-          <span className={styles.speedValue}>{speed}</span>
-          <span className={styles.speedUnit}>km/h</span>
-        </div>
       </div>
-
-      {gpsStatusLabel && (
-        <div
-          className={styles.gpsStatus}
-          data-status={gpsStatus}
-          role={canRetry ? 'button' : undefined}
-          tabIndex={canRetry ? 0 : undefined}
-          onClick={canRetry ? onRetryGps : undefined}
-          onKeyDown={
-            canRetry
-              ? (e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onRetryGps?.();
-                  }
-                }
-              : undefined
-          }
-        >
-          <span
-            className={styles.gpsDot}
-            data-active={gpsStatus === 'tracking'}
-            aria-hidden
-          />
-          <span className={styles.gpsLabel}>
-            {gpsStatusLabel}
-            {canRetry ? ' · Toca para reintentar' : ''}
-          </span>
-        </div>
-      )}
-    </div>
+    </article>
   );
 }
