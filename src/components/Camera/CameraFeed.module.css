@@ -38,6 +38,21 @@
   pointer-events: none;
 }
 
+.gestureHint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  padding: 0.5rem 0.75rem;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
+  color: #ffd27a;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+}
+
 .loading {
   position: absolute;
   top: 0;
