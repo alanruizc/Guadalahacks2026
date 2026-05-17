@@ -4,15 +4,16 @@ import {
   type FaceLandmarkerResult,
 } from '@mediapipe/tasks-vision';
 
-const MODEL_PATH = '/models/face_landmarker.task';
-const WASM_PATH = '/wasm';
+// Cambiamos las rutas locales caóticas por las URLs oficiales e infalibles de Google por internet
+const MODEL_PATH = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const WASM_PATH = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm';
 
 let faceLandmarkerInstance: FaceLandmarker | null = null;
 let initPromise: Promise<FaceLandmarker> | null = null;
 
 async function createLandmarker(delegate: 'GPU' | 'CPU'): Promise<FaceLandmarker> {
-  const wasmBase = new URL(WASM_PATH, window.location.origin).href.replace(/\/$/, '');
-  const vision = await FilesetResolver.forVisionTasks(wasmBase, false);
+  // Inicializamos el resolvedor de tareas apuntando directamente al CDN remoto
+  const vision = await FilesetResolver.forVisionTasks(WASM_PATH, false);
 
   return FaceLandmarker.createFromOptions(vision, {
     baseOptions: {
@@ -38,7 +39,8 @@ export async function initializeFaceLandmarker(): Promise<FaceLandmarker> {
   initPromise = (async () => {
     try {
       faceLandmarkerInstance = await createLandmarker('GPU');
-    } catch {
+    } catch (err) {
+      console.warn("Fallo al inicializar en GPU, intentando con CPU...", err);
       faceLandmarkerInstance = await createLandmarker('CPU');
     }
     return faceLandmarkerInstance;

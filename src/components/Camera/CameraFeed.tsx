@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FaceLandmarker, NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { initializeFaceLandmarker, detectFaces } from '../../services/faceLandmarker';
+import { useFaceDetection } from '../../hooks/useFaceDetection';
 import {
   computeFaceZoomTarget,
   faceZoomToTransform,
@@ -17,6 +18,7 @@ const VIDEO_HEIGHT = 480;
 
 interface CameraFeedProps {
   onReady?: (videoElement: HTMLVideoElement) => void;
+  onFatigaChange?: (fatiga: number) => void;
 }
 
 function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
@@ -43,7 +45,7 @@ function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
   });
 }
 
-export function CameraFeed({ onReady }: CameraFeedProps) {
+export function CameraFeed({ onReady, onFatigaChange }: CameraFeedProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -52,6 +54,9 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isModelLoading, setIsModelLoading] = useState(true);
 
+  // Consumo del nuevo hook pasivo
+  const { nivelFatiga, procesarFotogramaSomnolencia, resetFatiga } = useFaceDetection();
+
   const landmarkerRef = useRef<FaceLandmarker | null>(null);
   const animationRef = useRef<number | null>(null);
   const lastFrameTimeRef = useRef(0);
@@ -59,6 +64,13 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
   const zoomStateRef = useRef<FaceZoomState>({ scale: 1, originX: 50, originY: 50 });
 
   onReadyRef.current = onReady;
+
+  // Propagación síncrona hacia App.tsx
+  useEffect(() => {
+    if (onFatigaChange) {
+      onFatigaChange(nivelFatiga);
+    }
+  }, [nivelFatiga, onFatigaChange]);
 
   const applyFaceZoom = (landmarks: NormalizedLandmark[] | null) => {
     const wrapper = wrapperRef.current;
@@ -230,10 +242,13 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
           const frameHeight = activeVideo.videoHeight;
           const result = detectFaces(landmarkerRef.current, activeVideo, timestampMs);
 
-          if (result.faceLandmarks.length > 0) {
+          if (result && result.faceLandmarks && result.faceLandmarks.length > 0) {
             const landmarks = result.faceLandmarks[0];
             drawLandmarks(landmarks, frameWidth, frameHeight);
             applyFaceZoom(landmarks);
+
+            // CORRECCIÓN CLAVE: Inyección lineal del fotograma procesado hacia TensorFlow sin colisiones de hilos
+            procesarFotogramaSomnolencia(activeVideo, landmarks);
           } else {
             const canvas = canvasRef.current;
             const ctx = canvas?.getContext('2d');
@@ -241,6 +256,9 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
               ctx.clearRect(0, 0, canvas.width, canvas.height);
             }
             applyFaceZoom(null);
+            
+            // Limpiar acumulados si no hay rostro en pantalla
+            resetFatiga();
           }
 
           animationRef.current = requestAnimationFrame(processFrame);
@@ -249,10 +267,7 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
         animationRef.current = requestAnimationFrame(processFrame);
       } catch (err) {
         if (!mounted) return;
-        const message =
-          err instanceof Error
-            ? err.message
-            : 'No se pudo acceder a la cámara. Verifica permisos del navegador.';
+        const message = err instanceof Error ? err.message : 'No se pudo acceder a la cámara.';
         setCameraError(message);
         setIsModelLoading(false);
       }
@@ -271,10 +286,12 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
       }
       landmarkerRef.current = null;
     };
-  }, []);
+  }, [procesarFotogramaSomnolencia, resetFatiga]);
+
+  const containerClass = `${styles.container} ${nivelFatiga > 55 ? styles.drowsyAlert : ''}`;
 
   return (
-    <div className={styles.container}>
+    <div className={containerClass}>
       {cameraError ? (
         <div className={styles.error}>
           <span className={styles.errorIcon}>!</span>
@@ -297,7 +314,7 @@ export function CameraFeed({ onReady }: CameraFeedProps) {
           </div>
           {isModelLoading && (
             <div className={styles.loading}>
-              <span>Iniciando cámara y modelo...</span>
+              <span>Iniciando cámara y modelo de somnolencia...</span>
             </div>
           )}
         </div>

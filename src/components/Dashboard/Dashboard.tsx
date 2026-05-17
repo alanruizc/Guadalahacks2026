@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import styles from './Dashboard.module.css';
 import { Speedometer } from './metrics/Speedometer';
 import { AlertIndicator } from './metrics/AlertIndicator';
@@ -23,8 +23,23 @@ const initialState: DriverState = {
   isCameraActive: false,
 };
 
-export function Dashboard() {
+// CORRECCIÓN 1: Definimos la interfaz para aceptar la fatiga que viene del exterior
+interface DashboardProps {
+  fatiga: number;
+}
+
+export function Dashboard({ fatiga }: DashboardProps) {
   const [state, setState] = useState<DriverState>(initialState);
+
+  // CORRECCIÓN 2: Sincronizamos la fatiga que calcula el modelo de IA con el estado local
+  useEffect(() => {
+    setState(prev => ({
+      ...prev,
+      fatigueLevel: fatiga,
+      // Activamos una alerta visual crítica si el nivel supera el 55%
+      isAlertActive: fatiga > 55 ? true : prev.isAlertActive
+    }));
+  }, [fatiga]);
 
   const handleSpeedChange = (speed: number) => {
     setState(prev => ({ ...prev, speed }));
@@ -42,6 +57,13 @@ export function Dashboard() {
     setState(prev => ({ ...prev, isCameraActive: true }));
   }, []);
 
+  // Función auxiliar para determinar dinámicamente el texto del estado de alerta
+  const getAlertStatusText = () => {
+    if (state.fatigueLevel > 60) return '🚨 CRÍTICO / SOMNOLENCIA';
+    if (state.fatigueLevel > 30) return '⚠️ FATIGA LEVE';
+    return '🟢 NORMAL';
+  };
+
   return (
     <div className={styles.dashboard}>
       <header className={styles.header}>
@@ -54,58 +76,72 @@ export function Dashboard() {
 
       <main className={styles.main}>
         <section className={styles.cameraSection}>
-          <CameraFeed onReady={handleCameraReady} />
-        </section>
-
-        <div className={styles.content}>
-        <section className={styles.speedometerSection}>
-          <Speedometer
-            speed={state.speed}
-            onSpeedChange={handleSpeedChange}
+          {/* CORRECCIÓN 3: Le pasamos el callback al CameraFeed interno para capturar la telemetría */}
+          <CameraFeed 
+            onReady={handleCameraReady} 
+            onFatigaChange={(nuevaFatiga) => {
+              setState(prev => ({
+                ...prev,
+                fatigueLevel: nuevaFatiga,
+                isAlertActive: nuevaFatiga > 55 ? true : prev.isAlertActive
+              }));
+            }}
           />
         </section>
 
-        <section className={styles.metricsSection}>
-          <div className={styles.metricCard}>
-            <h3 className={styles.metricTitle}>Nivel de Fatiga</h3>
-            <div className={styles.fatigueBar}>
-              <div
-                className={styles.fatigueFill}
-                style={{ width: `${state.fatigueLevel}%` }}
+        <div className={styles.content}>
+          <section className={styles.speedometerSection}>
+            <Speedometer
+              speed={state.speed}
+              onSpeedChange={handleSpeedChange}
+            />
+          </section>
+
+          <section className={styles.metricsSection}>
+            <div className={styles.metricCard}>
+              <h3 className={styles.metricTitle}>Nivel de Fatiga</h3>
+              <div className={styles.fatigueBar}>
+                <div
+                  className={styles.fatigueFill}
+                  style={{ width: `${state.fatigueLevel}%` }}
+                />
+              </div>
+              <span className={styles.metricValue}>{state.fatigueLevel}%</span>
+            </div>
+
+            <div className={styles.metricCard}>
+              <h3 className={styles.metricTitle}>Estado de Alerta</h3>
+              {/* CORRECCIÓN 4: Render dinámico del texto de alerta según el porcentaje */}
+              <div style={{ marginBottom: '10px', fontWeight: 'bold', fontSize: '1.1rem' }}>
+                {getAlertStatusText()}
+              </div>
+              <AlertIndicator
+                isActive={state.isAlertActive}
+                onAck={handleAlertAck}
               />
             </div>
-            <span className={styles.metricValue}>{state.fatigueLevel}%</span>
-          </div>
-
-          <div className={styles.metricCard}>
-            <h3 className={styles.metricTitle}>Estado de Alerta</h3>
-            <AlertIndicator
-              isActive={state.isAlertActive}
-              onAck={handleAlertAck}
-            />
-          </div>
-        </section>
-
-        <section className={styles.controlsSection}>
-          <button
-            className={`${styles.voiceButton} ${state.isVoiceListening ? styles.listening : ''}`}
-            onClick={handleVoiceToggle}
-          >
-            <span className={styles.voiceIcon}>
-              {state.isVoiceListening ? 'ON' : 'OFF'}
-            </span>
-            {state.isVoiceListening ? 'Escuchando...' : 'Comando de Voz'}
-          </button>
-        </section>
-
-        {state.currentMessage && (
-          <section className={styles.messageSection}>
-            <div className={styles.messageCard}>
-              <span className={styles.messageIcon}>MSG</span>
-              <p className={styles.messageText}>{state.currentMessage}</p>
-            </div>
           </section>
-        )}
+
+          <section className={styles.controlsSection}>
+            <button
+              className={`${styles.voiceButton} ${state.isVoiceListening ? styles.listening : ''}`}
+              onClick={handleVoiceToggle}
+            >
+              <span className={styles.voiceIcon}>
+                {state.isVoiceListening ? 'ON' : 'OFF'}
+              </span>
+              {state.isVoiceListening ? 'Escuchando...' : 'Comando de Voz'}
+            </button>
+          </section>
+
+          {state.currentMessage && (
+            <section className={styles.messageSection}>
+              <div className={styles.messageCard}>
+                <span className={styles.messageIcon}>MSG</span>
+                <p className={styles.messageText}>{state.currentMessage}</p>
+              </div>
+            </section>
+          )}
         </div>
       </main>
 
