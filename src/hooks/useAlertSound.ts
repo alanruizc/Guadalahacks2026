@@ -4,9 +4,7 @@ import { alertSoundService } from '../services/alertSound/alertSoundService';
 /** Desbloquea audio en el primer gesto del usuario (política autoplay). */
 export function useAlertSoundUnlock(): void {
   useEffect(() => {
-    const unlock = () => {
-      alertSoundService.unlock();
-    };
+    const unlock = () => alertSoundService.unlock();
     window.addEventListener('pointerdown', unlock, { once: true });
     window.addEventListener('keydown', unlock, { once: true });
     return () => {

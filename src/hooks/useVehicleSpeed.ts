@@ -12,6 +12,12 @@ const MS_TO_KMH = 3.6;
 const MAX_SPEED_KMH = 300;
 const MIN_DT_SEC = 0.5;
 const SMOOTHING = 0.35;
+/** Por debajo de esto se considera detenido (ruido típico del GPS en reposo). */
+const STATIONARY_THRESHOLD_KMH = 5;
+/** Desplazamiento mínimo entre lecturas para calcular velocidad por posición. */
+const MIN_MOVEMENT_METERS = 10;
+/** Con poca precisión horizontal, ignorar velocidades bajas del chip GPS. */
+const LOW_SPEED_ACCURACY_CUTOFF_M = 35;
 
 const WATCH_OPTIONS: PositionOptions = {
   enableHighAccuracy: true,
@@ -33,6 +39,18 @@ function haversineMeters(
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function applyStationaryFilter(kmh: number, accuracyM: number | null): number {
+  if (kmh < STATIONARY_THRESHOLD_KMH) return 0;
+  if (
+    accuracyM != null &&
+    accuracyM > LOW_SPEED_ACCURACY_CUTOFF_M &&
+    kmh < STATIONARY_THRESHOLD_KMH * 3
+  ) {
+    return 0;
+  }
+  return kmh;
 }
 
 function getStatusLabel(status: VehicleSpeedStatus): string {
@@ -74,8 +92,10 @@ export function useVehicleSpeed(enabled = true): UseVehicleSpeedReturn {
     let rawKmh: number | null = null;
     const { coords, timestamp } = position;
 
+    const accuracyM = coords.accuracy ?? null;
+
     if (coords.speed != null && !Number.isNaN(coords.speed) && coords.speed >= 0) {
-      rawKmh = coords.speed * MS_TO_KMH;
+      rawKmh = applyStationaryFilter(coords.speed * MS_TO_KMH, accuracyM);
     } else if (lastPosRef.current) {
       const dt = (timestamp - lastPosRef.current.ts) / 1000;
       if (dt >= MIN_DT_SEC) {
@@ -85,7 +105,11 @@ export function useVehicleSpeed(enabled = true): UseVehicleSpeedReturn {
           coords.latitude,
           coords.longitude,
         );
-        rawKmh = (meters / dt) * MS_TO_KMH;
+        if (meters >= MIN_MOVEMENT_METERS) {
+          rawKmh = applyStationaryFilter((meters / dt) * MS_TO_KMH, accuracyM);
+        } else {
+          rawKmh = 0;
+        }
       }
     }
 
@@ -98,8 +122,14 @@ export function useVehicleSpeed(enabled = true): UseVehicleSpeedReturn {
     if (rawKmh == null || rawKmh > MAX_SPEED_KMH) return;
 
     const prev = smoothedRef.current;
-    const next =
-      prev === 0 ? rawKmh : SMOOTHING * rawKmh + (1 - SMOOTHING) * prev;
+    let next: number;
+
+    if (rawKmh === 0) {
+      next = prev <= STATIONARY_THRESHOLD_KMH ? 0 : Math.round(prev * 0.25);
+    } else {
+      next = prev === 0 ? rawKmh : SMOOTHING * rawKmh + (1 - SMOOTHING) * prev;
+    }
+
     smoothedRef.current = next;
     setSpeed(Math.round(next));
   }, []);

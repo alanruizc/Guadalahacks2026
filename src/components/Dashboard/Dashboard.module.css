@@ -14,12 +14,20 @@
 .header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-end;
+  align-items: flex-start;
   flex-shrink: 0;
   gap: 1rem;
   padding: max(0.75rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) 0.65rem
     max(1rem, env(safe-area-inset-left));
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.headerNotification {
+  flex-shrink: 0;
+  min-height: 2rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
 }
 
 .headerBrand {
