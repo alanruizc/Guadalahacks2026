@@ -26,6 +26,3 @@ pnpm-lock.yaml
 public/models
 public/wasm
 .cursorroles
-
-scripts/small_model/
-scripts/large_model/
